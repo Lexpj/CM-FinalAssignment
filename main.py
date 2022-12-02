@@ -1,8 +1,6 @@
-import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
 import numpy as np
-import math
 import pygame
+from pygame.locals import *
 
 def draw_arrow(
         surface: pygame.Surface,
@@ -103,63 +101,64 @@ class Model:
         self.moves = [[0,1],[0,-1],[1,0],[-1,0]]
         self.path = None
         
-    def __setup__(self):
+    def __setup__(self,moveToItself=False):
+
+        def __flattenStates__():
+            self.states = [0]*self.nrStates
+            c = 0
+            
+            for grid in range(self.dims[2]):
+                for row in range(self.dims[1]):
+                    for col in range(self.dims[0]):
+                        self.states[c] = State()
+                        self.states[c].setTag(self.grids[grid][row][col])
+                        c += 1
+                
+        def __defineActions__():
+            normalState = []
+            self.actions = dict()
+            self.nrActions = 0
+
+            for i in range(self.dims[1]):
+                normalState.append([])
+                for j in range(self.dims[0]):
+                    normalState[i].append(i*self.dims[0] + j)
+
+            for row in range(self.dims[1]):
+                for col in range(self.dims[0]):
+                    
+                    # Check for moves for each grid cell
+                    pos = []     
+
+                    
+                    for move in self.moves:
+                        # Move is within grid
+                        if 0 <= col+move[0] < self.dims[0] and 0 <= row+move[1] < self.dims[1]:
+                            pos.append(normalState[row+move[1]][col+move[0]])
+                        else: #<- move to itself
+                            if moveToItself and normalState[row][col] not in pos:
+                                pos.append(normalState[row][col])
+                    
+                    # Copy found moves for each dimension (gridsize is static)
+                    for grid in range(self.dims[2]):
+                        
+                        # Check if cell is not marked with X:
+                        if self.states[normalState[row][col]+(grid*(self.dims[0]*self.dims[1]))].tag != "X":
+                            actions = [x+(((grid+1)%self.dims[2])*(self.dims[0]*self.dims[1])) for x in pos]
+                            actions = [x for x in actions if self.states[x].tag != 'X']  # Filters out blocked states
+                            actions = [Action(x) for x in actions]          # Makes action classes
+                            
+                            self.actions[normalState[row][col]+(grid*(self.dims[0]*self.dims[1]))] = actions
+                            self.nrActions += len(pos)
+                        else:
+                            self.actions[normalState[row][col]+(grid*(self.dims[0]*self.dims[1]))] = []
+    
         self.dims, self.grids = self.readFiles(self.folder)
         self.nrStates = self.dims[0]*self.dims[1]*self.dims[2]
         
-        self.__flattenStates__()
-        self.__defineActions__()
+        __flattenStates__()
+        __defineActions__()
 
-    def __flattenStates__(self):
-        self.states = [0]*self.nrStates
-        c = 0
-        
-        for grid in range(self.dims[2]):
-            for row in range(self.dims[1]):
-                for col in range(self.dims[0]):
-                    self.states[c] = State()
-                    self.states[c].setTag(self.grids[grid][row][col])
-                    c += 1
-              
-    def __defineActions__(self):
-        normalState = []
-        self.actions = dict()
-        self.nrActions = 0
-
-        for i in range(self.dims[1]):
-            normalState.append([])
-            for j in range(self.dims[0]):
-                normalState[i].append(i*self.dims[0] + j)
-
-        for row in range(self.dims[1]):
-            for col in range(self.dims[0]):
-                
-                # Check for moves for each grid cell
-                pos = []     
-
-                
-                for move in self.moves:
-                    # Move is within grid
-                    if 0 <= col+move[0] < self.dims[0] and 0 <= row+move[1] < self.dims[1]:
-                        pos.append(normalState[row+move[1]][col+move[0]])
-                    #else: #<- move to itself
-                    #    if normalState[row][col] not in pos:
-                    #        pos.append(normalState[row][col])
-                
-                # Copy found moves for each dimension (gridsize is static)
-                for grid in range(self.dims[2]):
-                    
-                    # Check if cell is not marked with X:
-                    if self.states[normalState[row][col]+(grid*(self.dims[0]*self.dims[1]))].tag != "X":
-                        actions = [x+(((grid+1)%self.dims[2])*(self.dims[0]*self.dims[1])) for x in pos]
-                        actions = [x for x in actions if self.states[x].tag != 'X']  # Filters out blocked states
-                        actions = [Action(x) for x in actions]          # Makes action classes
-                        
-                        self.actions[normalState[row][col]+(grid*(self.dims[0]*self.dims[1]))] = actions
-                        self.nrActions += len(pos)
-                    else:
-                        self.actions[normalState[row][col]+(grid*(self.dims[0]*self.dims[1]))] = []
-    
     def assignGridValues(self):
         """
         Dynamically assigns values to states
@@ -195,7 +194,7 @@ class Model:
         while self.states[self.path[-1]].tag != "R":
             next = None
             nextval = -1000
-
+            
             for action in self.actions[self.path[-1]]:
                 if self.states[action.endStateIndex].value > nextval:
                     nextval = self.states[action.endStateIndex].value
@@ -238,21 +237,22 @@ class Model:
         """
         # Define some colors
         BLACK = (0, 0, 0)
-        W,M = 30, 10
+        W,M = 30,10
 
         pygame.init()
 
         size = ((W+M)*self.dims[0]*self.dims[1]+M, (W+M)*self.dims[2]+M)
         screen = pygame.display.set_mode(size)
 
+        mouseHover = True           # To show actions of state you are currently hovering over
+
         done = False
         clock = pygame.time.Clock()
         
-        # -------- Main Program Loop -----------
-        while not done:
-
-            
-            screen.fill(BLACK)
+        def drawStates():
+            """
+            Draws all states in a self.dims[0]*self.dims[1] by self.dims[2] grid
+            """
             for i in range(self.dims[2]):
                 for j in range(self.dims[0]*self.dims[1]):
                     # Draw state
@@ -265,14 +265,13 @@ class Model:
                     elif self.states[i*self.dims[0]*self.dims[1] + j].tag == "X":
                         pass
                     else:
-                        pygame.draw.rect(screen, (255,255,255), [j*(W+M)+M,i*(W+M)+M,W,W])
+                        pygame.draw.rect(screen,(255,255,255), [j*(W+M)+M,i*(W+M)+M,W,W])
 
-            # Mark arrows if there is a path
-            if self.path != None:
-                markedArrows = [(self.path[i],self.path[i+1]) for i in range(len(self.path)-1)]
-            else:
-                markedArrows = []
-
+        def drawActions(markedArrows=[],gradient=True,drawFromPunishment=False,drawFromReward=False):
+            """
+            Draws for each state all actions. The last layer goes over to the first layer (gridwise)
+            :param markedArrows: list actions in consecutive order (default = [])
+            """
             for i in range(self.dims[2]-1):
                 for j in range(self.dims[0]*self.dims[1]):        
                     # Draw actions
@@ -282,9 +281,17 @@ class Model:
                             color = (255,255,0)
                             bwidth = 4
                         else:
-                            color = (0,255,255) 
+                            color = Color('lightgray')
+                            if gradient: # for colors floodfill
+                                score = self.states[i*self.dims[0]*self.dims[1] + j].value / POINTS['R']
+                                if self.states[i*self.dims[0]*self.dims[1] + j].tag != 'P':
+                                    color = (255 - (255 * score), 255 * score, 255 - (255 * score))
                             bwidth = 1
-                        draw_arrow(screen, pygame.Vector2(j*(W+M)+M + W//2,i*(W+M)+M+ W//2),
+                        
+                        # Draw all arrows, even from punishment?
+                        if self.states[i*self.dims[0]*self.dims[1] + j].tag != 'P' or drawFromPunishment:
+                            if self.states[i*self.dims[0]*self.dims[1] + j].tag != 'R' or drawFromReward:
+                                draw_arrow(screen, pygame.Vector2(j*(W+M)+M + W//2,i*(W+M)+M+ W//2),
                                     pygame.Vector2((action.endStateIndex%(self.dims[0]*self.dims[1])*(W+M)+M+ W//2,action.endStateIndex//(self.dims[0]*self.dims[1])*(W+M)+M+ W//2)),color,head_width=16,head_height=8,body_width=bwidth)
             
             
@@ -297,20 +304,69 @@ class Model:
                         color = (255,255,0)
                         bwidth = 4
                     else:
-                        color = (0,255,255) 
+                        color = Color('lightgray')
+                        if gradient: # for colors floodfill
+                            score = self.states[i*self.dims[0]*self.dims[1] + j].value / POINTS['R']
+                            if self.states[i*self.dims[0]*self.dims[1] + j].tag != 'P':
+                                color = (255 - (255 * score), 255 * score, 255 - (255 * score))
                         bwidth = 1
                     # Last layer fade
-                    draw_arrow(screen, pygame.Vector2(j*(W+M)+M + W//2,i*(W+M)+M+ W//2),
-                                    pygame.Vector2((action.endStateIndex%(self.dims[0]*self.dims[1])*(W+M)+M+ W//2,(i+1)*(W+M)+M+ W//2)),color,head_width=16,head_height=8,body_width=bwidth)
-                    draw_arrow(screen, pygame.Vector2(j*(W+M)+M + W//2,-1*(W+M)+M+ W//2),
-                                    pygame.Vector2((action.endStateIndex%(self.dims[0]*self.dims[1])*(W+M)+M+ W//2,(-1+1)*(W+M)+M+ W//2)),color,head_width=16,head_height=8,body_width=bwidth)
+                    # Draw all arrows, even from punishment?
+                    if self.states[i*self.dims[0]*self.dims[1] + j].tag != 'P' or drawFromPunishment:
+                        if self.states[i*self.dims[0]*self.dims[1] + j].tag != 'R' or drawFromReward:
+                            draw_arrow(screen, pygame.Vector2(j*(W+M)+M + W//2,i*(W+M)+M+ W//2),
+                                pygame.Vector2((action.endStateIndex%(self.dims[0]*self.dims[1])*(W+M)+M+ W//2,(i+1)*(W+M)+M+ W//2)),color,head_width=16,head_height=8,body_width=bwidth)
+                            draw_arrow(screen, pygame.Vector2(j*(W+M)+M + W//2,-1*(W+M)+M+ W//2),
+                                pygame.Vector2((action.endStateIndex%(self.dims[0]*self.dims[1])*(W+M)+M+ W//2,(-1+1)*(W+M)+M+ W//2)),color,head_width=16,head_height=8,body_width=bwidth)
 
-                    
-            pygame.display.update()
+        def hoverMouseActions():
+            """
+            Hover your mouse over a state to see what actions you can take
+            """
+            mposx, mposy = pygame.mouse.get_pos()
+            stateindx, stateindy = mposx // (W+M), mposy // (W+M)
+            stateindx, stateindy = min((self.dims[0])*(self.dims[1])-1,stateindx), min(self.dims[2]-1,stateindy)
+            actions = self.actions[stateindy*self.dims[0]*self.dims[1] + stateindx]
+            for action in actions:
+                color = Color('blue')
+                bwidth = 4
+                
+                if stateindy != self.dims[2]-1:
+                    draw_arrow(screen, pygame.Vector2(stateindx*(M+W)+M + W//2,stateindy*(M+W)+M + W//2),
+                            pygame.Vector2((action.endStateIndex%(self.dims[0]*self.dims[1])*(W+M)+M+ W//2,action.endStateIndex//(self.dims[0]*self.dims[1])*(W+M)+M+ W//2)),color,head_width=16,head_height=8,body_width=bwidth)
+                else: # top bottom
+                    draw_arrow(screen, pygame.Vector2(stateindx*(W+M)+M + W//2,stateindy*(W+M)+M+ W//2),
+                            pygame.Vector2((action.endStateIndex%(self.dims[0]*self.dims[1])*(W+M)+M+ W//2,(stateindy+1)*(W+M)+M+ W//2)),color,head_width=16,head_height=8,body_width=bwidth)
+                    draw_arrow(screen, pygame.Vector2(stateindx*(W+M)+M + W//2,-1*(W+M)+M+ W//2),
+                            pygame.Vector2((action.endStateIndex%(self.dims[0]*self.dims[1])*(W+M)+M+ W//2,(-1+1)*(W+M)+M+ W//2)),color,head_width=16,head_height=8,body_width=bwidth)
 
+
+        # -------- Main Program Loop -----------
+        while not done:
+            # Events
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     done = True
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_m:
+                        mouseHover = not mouseHover
+            
+            screen.fill(BLACK)
+            
+            # Draws all states
+            drawStates()
+            
+            # Mark arrows if there is a path
+            if self.path != None:
+                drawActions([(self.path[i],self.path[i+1]) for i in range(len(self.path)-1)],gradient=False)
+            else:
+                drawActions()
+
+            # Mouse to show actions
+            if mouseHover: hoverMouseActions()
+
+            # Blit to screen
+            pygame.display.update()
 
             clock.tick(60)
         
@@ -360,7 +416,7 @@ class Model:
                 if event.type == pygame.QUIT:
                     done = True
 
-            clock.tick(1)
+            clock.tick(2)
             c += 1
             
             # reset animation if path exists
@@ -377,14 +433,14 @@ class Model:
         print(f"Number of actions: {self.nrActions}")
         print(f"States:")
         for ind,state in enumerate(self.states):
-            print(f"State: {ind}, tag: {state.tag}, value: {state.value}, actions: {[c.endStateIndex for c in self.actions[ind]]}")
+            print(f"State: {ind}, tag: {state.tag}, value: {state.value:.2f}, actions: {[c.endStateIndex for c in self.actions[ind]]}")
         #print(f"Actions: {self.actions}")
 
 
 def main():
     model = Model()
-    model.useFolder("grids")
-    model.__setup__()
+    model.useFolder("gen")
+    model.__setup__(moveToItself=True)
     
     model.assignGridValues()
     model.greedyPolicy()
@@ -392,7 +448,7 @@ def main():
     model.summary()
 
     model.drawAnimation()
-    model.drawModel()
+    #model.drawModel()
     
 
 
