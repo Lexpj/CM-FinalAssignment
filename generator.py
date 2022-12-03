@@ -30,16 +30,8 @@ class Generator:
 
         else:
             print("Set a folder first!")
-
-    def printInitialGrid(self):
-        """
-        Prints initial grid
-        """
-        if self.grid != None:
-            for row in self.grid:
-                print(''.join(row))
     
-    def generate(self):
+    def generate(self,summary=True):
         """
         Expands the initial grid by translating the letters to moving punishments
         First it translates all letters to objects
@@ -135,18 +127,26 @@ class Generator:
                     for line in grids[count]:
                         f.write(''.join(line)+"\n")
                                         
-
+        def printSummary():
+            print(f"==== SUMMARY ====")
+            print(f"Dimensions: {self.dims+[len(allCycles)]}")
+            print(f"Number of states: {self.dims[0]*self.dims[1]*len(allCycles)}")
+            print(f"Created {len(allCycles)} files")
+            print(f"Do not forget to set a starting state S")
+            
         allLetters = createObjects()
         allCycles = cycleObjects(allLetters)
         allGrids = translateToGrids(allCycles)
         saveToFile(allGrids)
-        #print(allGrids)
+        
+        if summary: 
+            printSummary()
+        
 
 def main():
     gen = Generator()
     gen.useFolder("gen")
     gen.readFiles()
-    gen.printInitialGrid()
 
     gen.generate()
 

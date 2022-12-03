@@ -373,7 +373,7 @@ class Model:
         # Close the window and quit.
         pygame.quit()
     
-    def drawAnimation(self):
+    def drawAnimation(self,path=None):
         
         # Define some colors
         BLACK = (0, 0, 0)
@@ -420,7 +420,7 @@ class Model:
             c += 1
             
             # reset animation if path exists
-            if self.path != None and c == len(self.path):
+            if path != None and c == len(path):
                 c = 0
 
         # Close the window and quit.
@@ -434,12 +434,11 @@ class Model:
         print(f"States:")
         for ind,state in enumerate(self.states):
             print(f"State: {ind}, tag: {state.tag}, value: {state.value:.2f}, actions: {[c.endStateIndex for c in self.actions[ind]]}")
-        #print(f"Actions: {self.actions}")
 
 
 def main():
     model = Model()
-    model.useFolder("gen")
+    model.useFolder("lvl3")
     model.__setup__(moveToItself=True)
     
     model.assignGridValues()
@@ -447,7 +446,7 @@ def main():
 
     model.summary()
 
-    model.drawAnimation()
+    model.drawAnimation(path=model.path)
     #model.drawModel()
     
 
