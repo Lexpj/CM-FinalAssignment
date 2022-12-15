@@ -1,6 +1,8 @@
 import numpy as np
 import pygame
 from pygame.locals import *
+from random import uniform, choice
+import csv
 
 def draw_arrow(
         surface: pygame.Surface,
@@ -60,32 +62,32 @@ def draw_arrow(
 
 
 POINTS = {
-    "P": 0,
+    "P": -100,
     "R": 100,
     "S": 0,
     ".": 0,
     "X": 0
 }
-        
+TERMINAL = [
+     'R', 'P'
+]
         
 class State:
-    
     def __init__(self):
         self.value = None
         self.tag = None
+        self.isTerminal = None
+
+        self.actions = None
     
     def setTag(self,tag):
         self.tag = tag
         self.value = POINTS[tag]
-    
-class Action:
+        if tag in TERMINAL:
+            self.isTerminal = True
+        else:
+            self.isTerminal = False
 
-    def __init__(self, stateIndex):
-        self.endStateIndex = stateIndex
-
-
-    
-      
 class Model:
     
     def __init__(self):
@@ -94,14 +96,22 @@ class Model:
         self.folder = None
         
         self.nrStates = None
-        self.nrActions = None
         self.states = None
-        self.actions = None
+        self.startingState = None
         
-        self.moves = [[0,1],[0,-1],[1,0],[-1,0]]
+        self.moves = [(0,1),(0,-1),(1,0),(-1,0)]
         self.path = None
-        
-    def __setup__(self,moveToItself=False):
+    
+    def moveToItself(self,bool: bool = False):
+        if bool:
+            self.moves.append((0,0))
+        else:
+            try:
+                self.moves.remove((0,0))
+            except:
+                pass
+            
+    def __setup__(self):
 
         def __flattenStates__():
             self.states = [0]*self.nrStates
@@ -112,13 +122,14 @@ class Model:
                     for col in range(self.dims[0]):
                         self.states[c] = State()
                         self.states[c].setTag(self.grids[grid][row][col])
+                        if self.states[c].tag == 'S':   # Set starting state
+                            self.startingState = c
                         c += 1
                 
         def __defineActions__():
             normalState = []
-            self.actions = dict()
-            self.nrActions = 0
 
+            # Make 'identity' grid
             for i in range(self.dims[1]):
                 normalState.append([])
                 for j in range(self.dims[0]):
@@ -128,30 +139,26 @@ class Model:
                 for col in range(self.dims[0]):
                     
                     # Check for moves for each grid cell
-                    pos = []     
-
-                    
+                    pos = {}  
                     for move in self.moves:
                         # Move is within grid
                         if 0 <= col+move[0] < self.dims[0] and 0 <= row+move[1] < self.dims[1]:
-                            pos.append(normalState[row+move[1]][col+move[0]])
-                        else: #<- move to itself
-                            if moveToItself and normalState[row][col] not in pos:
-                                pos.append(normalState[row][col])
+                            pos[move] = normalState[row+move[1]][col+move[0]]
+
                     
                     # Copy found moves for each dimension (gridsize is static)
                     for grid in range(self.dims[2]):
-                        
+                        # Skip if terminal:
+                        if self.states[normalState[row][col]+(grid*(self.dims[0]*self.dims[1]))].tag in TERMINAL:
+                            self.states[normalState[row][col]+(grid*(self.dims[0]*self.dims[1]))].actions = {}
+               
                         # Check if cell is not marked with X:
-                        if self.states[normalState[row][col]+(grid*(self.dims[0]*self.dims[1]))].tag != "X":
-                            actions = [x+(((grid+1)%self.dims[2])*(self.dims[0]*self.dims[1])) for x in pos]
-                            actions = [x for x in actions if self.states[x].tag != 'X']  # Filters out blocked states
-                            actions = [Action(x) for x in actions]          # Makes action classes
-                            
-                            self.actions[normalState[row][col]+(grid*(self.dims[0]*self.dims[1]))] = actions
-                            self.nrActions += len(pos)
+                        elif self.states[normalState[row][col]+(grid*(self.dims[0]*self.dims[1]))].tag != "X":
+                            actions = {key: value+(((grid+1)%self.dims[2])*(self.dims[0]*self.dims[1])) for key,value in pos.items()}
+                            actions = {key: value for key,value in actions.items() if self.states[value].tag != 'X'}  # Filters out blocked states
+                            self.states[normalState[row][col]+(grid*(self.dims[0]*self.dims[1]))].actions = actions 
                         else:
-                            self.actions[normalState[row][col]+(grid*(self.dims[0]*self.dims[1]))] = []
+                            self.states[normalState[row][col]+(grid*(self.dims[0]*self.dims[1]))].actions = {}
     
         self.dims, self.grids = self.readFiles(self.folder)
         self.nrStates = self.dims[0]*self.dims[1]*self.dims[2]
@@ -159,50 +166,94 @@ class Model:
         __flattenStates__()
         __defineActions__()
 
-    def assignGridValues(self):
+    def assignGridValues(self, mode,
+        iterations = 10,
+        epsilon = 0.1,
+        learningRate = 0.9,
+        discountFactor = 0.9):
         """
         Dynamically assigns values to states
         """
-        change = True
-        learningRate = 0.9
 
-        iterations = 0
-        
-        while change:
-            change = False
+        def floodFill():
+            change = True
+            learningRate = 0.9
 
-            for state in range(self.nrStates):
-                for action in self.actions[state]:
-                    newValue = self.states[action.endStateIndex].value * learningRate
-                    if self.states[state].value < newValue and self.states[state].tag != "P":
-                        self.states[state].value = newValue
-                        change = True
+            iterations = 0
             
-            iterations += 1
+            while change:
+                change = False
 
-        print(f"Took {iterations} iterations.")
-
-    def greedyPolicy(self):
-        self.path = []
-
-        # Find starting state
-        for i in range(self.nrStates):
-            if self.states[i].tag == "S":
-                self.path.append(i)
-        
-        # While last state is no reward state
-        while self.states[self.path[-1]].tag != "R":
-            next = None
-            nextval = -1000
-            
-            for action in self.actions[self.path[-1]]:
-                if self.states[action.endStateIndex].value > nextval:
-                    nextval = self.states[action.endStateIndex].value
-                    next = action.endStateIndex
+                for state in range(self.nrStates):
+                    for action in self.states[state].actions.values():
+                        newValue = self.states[action].value * learningRate
+                        if self.states[state].value < newValue and self.states[state].tag != "P":
+                            self.states[state].value = newValue
+                            change = True
                 
+                iterations += 1
+
+            print(f"Took {iterations} iterations.")
+
+        def SARSA(iterations, epsilon, learningRate, discountFactor):
+            
+            def Q(st,at):
+                print(st,at)
+                if self.states[st].isTerminal:
+                    return 0
+                return self.states[at].value - self.states[st].value
+            
+            def pickAction(s):
+                randomNumber = uniform(0,1)
+                print(randomNumber,s,end=" ")
+                if randomNumber <= epsilon: # random action
+                    if list(self.states[s].actions.values()):
+                        a = choice(list(self.states[s].actions.values()))
+                    else:
+                        a = None
+                else:                       # greedy action
+                    if list(self.states[s].actions.values()):
+                        a = max((self.states[a].value,a) for a in self.states[s].actions.values())[1]
+                    else:
+                        a = None
+                return a
+            
+            for iteration in range(iterations):
+                # initialize S
+                state = self.startingState
+                # Choose A from S using e-greedy
+                action = pickAction(state)
+                # While not terminal
+                while not self.states[state].isTerminal: 
+                    # Take action A, observe R, S'(=A)
+                    reward = Q(state,action)
+                    stateprime = action
+                    # Choose A' from S' using e-greedy
+                    actionprime = pickAction(stateprime)
+                    # Q(S,A) = Q(S,A) + a[R + yQ(S',A') - Q(S,A)] # NOT IN TERMINAL STATE:
+                    newvalue = self.states[state].value + learningRate*(reward + discountFactor*Q(stateprime,actionprime) - self.states[state].value)
+                    self.states[state].value = newvalue
+                    # Update states and actions
+                    state = stateprime
+                    action = actionprime
+                    
+        if mode == "floodFill":
+            floodFill()
+        elif mode == "SARSA":
+            SARSA(iterations, epsilon, learningRate, discountFactor)
+
+    def makePath(self):
+        self.path = [self.startingState]
+        print(self.path)
+        # While last state is no terminal
+        while self.states[self.path[-1]].tag not in TERMINAL \
+            and len(set(self.path)) == len(self.path): # duplicate
+            print(self.path)
+
+            next = max((self.states[a].value,a) for a in self.states[self.path[-1]].actions.values())[1]
             self.path.append(next)
         
-        print(f"Optimal greedy path: {self.path}")
+        print(f"Optimal path: {self.path}")
 
     def useFolder(self,folder):
         self.folder = folder
@@ -275,9 +326,9 @@ class Model:
             for i in range(self.dims[2]-1):
                 for j in range(self.dims[0]*self.dims[1]):        
                     # Draw actions
-                    for action in self.actions[i*self.dims[0]*self.dims[1] + j]:
+                    for action in self.states[i*self.dims[0]*self.dims[1] + j].actions.values():
                         # Path arrows color
-                        if (i*self.dims[0]*self.dims[1] + j, action.endStateIndex) in markedArrows:
+                        if (i*self.dims[0]*self.dims[1] + j, action) in markedArrows:
                             color = (255,255,0)
                             bwidth = 4
                         else:
@@ -292,15 +343,15 @@ class Model:
                         if self.states[i*self.dims[0]*self.dims[1] + j].tag != 'P' or drawFromPunishment:
                             if self.states[i*self.dims[0]*self.dims[1] + j].tag != 'R' or drawFromReward:
                                 draw_arrow(screen, pygame.Vector2(j*(W+M)+M + W//2,i*(W+M)+M+ W//2),
-                                    pygame.Vector2((action.endStateIndex%(self.dims[0]*self.dims[1])*(W+M)+M+ W//2,action.endStateIndex//(self.dims[0]*self.dims[1])*(W+M)+M+ W//2)),color,head_width=16,head_height=8,body_width=bwidth)
+                                    pygame.Vector2((action%(self.dims[0]*self.dims[1])*(W+M)+M+ W//2,action//(self.dims[0]*self.dims[1])*(W+M)+M+ W//2)),color,head_width=16,head_height=8,body_width=bwidth)
             
             
             # First/Last layer actions
             i = self.dims[2]-1
             for j in range(self.dims[0]*self.dims[1]):        
                 # Draw actions
-                for action in self.actions[i*self.dims[0]*self.dims[1] + j]:
-                    if (i*self.dims[0]*self.dims[1] + j, action.endStateIndex) in markedArrows:
+                for action in self.states[i*self.dims[0]*self.dims[1] + j].actions.values():
+                    if (i*self.dims[0]*self.dims[1] + j, action) in markedArrows:
                         color = (255,255,0)
                         bwidth = 4
                     else:
@@ -315,9 +366,9 @@ class Model:
                     if self.states[i*self.dims[0]*self.dims[1] + j].tag != 'P' or drawFromPunishment:
                         if self.states[i*self.dims[0]*self.dims[1] + j].tag != 'R' or drawFromReward:
                             draw_arrow(screen, pygame.Vector2(j*(W+M)+M + W//2,i*(W+M)+M+ W//2),
-                                pygame.Vector2((action.endStateIndex%(self.dims[0]*self.dims[1])*(W+M)+M+ W//2,(i+1)*(W+M)+M+ W//2)),color,head_width=16,head_height=8,body_width=bwidth)
+                                pygame.Vector2((action%(self.dims[0]*self.dims[1])*(W+M)+M+ W//2,(i+1)*(W+M)+M+ W//2)),color,head_width=16,head_height=8,body_width=bwidth)
                             draw_arrow(screen, pygame.Vector2(j*(W+M)+M + W//2,-1*(W+M)+M+ W//2),
-                                pygame.Vector2((action.endStateIndex%(self.dims[0]*self.dims[1])*(W+M)+M+ W//2,(-1+1)*(W+M)+M+ W//2)),color,head_width=16,head_height=8,body_width=bwidth)
+                                pygame.Vector2((action%(self.dims[0]*self.dims[1])*(W+M)+M+ W//2,(-1+1)*(W+M)+M+ W//2)),color,head_width=16,head_height=8,body_width=bwidth)
 
         def hoverMouseActions():
             """
@@ -326,19 +377,19 @@ class Model:
             mposx, mposy = pygame.mouse.get_pos()
             stateindx, stateindy = mposx // (W+M), mposy // (W+M)
             stateindx, stateindy = min((self.dims[0])*(self.dims[1])-1,stateindx), min(self.dims[2]-1,stateindy)
-            actions = self.actions[stateindy*self.dims[0]*self.dims[1] + stateindx]
+            actions = self.states[stateindy*self.dims[0]*self.dims[1] + stateindx].actions.values()
             for action in actions:
                 color = Color('blue')
                 bwidth = 4
                 
                 if stateindy != self.dims[2]-1:
                     draw_arrow(screen, pygame.Vector2(stateindx*(M+W)+M + W//2,stateindy*(M+W)+M + W//2),
-                            pygame.Vector2((action.endStateIndex%(self.dims[0]*self.dims[1])*(W+M)+M+ W//2,action.endStateIndex//(self.dims[0]*self.dims[1])*(W+M)+M+ W//2)),color,head_width=16,head_height=8,body_width=bwidth)
+                            pygame.Vector2((action%(self.dims[0]*self.dims[1])*(W+M)+M+ W//2,action//(self.dims[0]*self.dims[1])*(W+M)+M+ W//2)),color,head_width=16,head_height=8,body_width=bwidth)
                 else: # top bottom
                     draw_arrow(screen, pygame.Vector2(stateindx*(W+M)+M + W//2,stateindy*(W+M)+M+ W//2),
-                            pygame.Vector2((action.endStateIndex%(self.dims[0]*self.dims[1])*(W+M)+M+ W//2,(stateindy+1)*(W+M)+M+ W//2)),color,head_width=16,head_height=8,body_width=bwidth)
+                            pygame.Vector2((action%(self.dims[0]*self.dims[1])*(W+M)+M+ W//2,(stateindy+1)*(W+M)+M+ W//2)),color,head_width=16,head_height=8,body_width=bwidth)
                     draw_arrow(screen, pygame.Vector2(stateindx*(W+M)+M + W//2,-1*(W+M)+M+ W//2),
-                            pygame.Vector2((action.endStateIndex%(self.dims[0]*self.dims[1])*(W+M)+M+ W//2,(-1+1)*(W+M)+M+ W//2)),color,head_width=16,head_height=8,body_width=bwidth)
+                            pygame.Vector2((action%(self.dims[0]*self.dims[1])*(W+M)+M+ W//2,(-1+1)*(W+M)+M+ W//2)),color,head_width=16,head_height=8,body_width=bwidth)
 
 
         # -------- Main Program Loop -----------
@@ -509,12 +560,12 @@ class Model:
             for i in range(self.dims[2]-1):
                 for j in range(self.dims[0]*self.dims[1]):        
                     # Draw actions
-                    for action in self.actions[i*self.dims[0]*self.dims[1] + j]:
+                    for action in self.states[i*self.dims[0]*self.dims[1] + j].actions.values():
                         # Path arrows color
-                        if (i*self.dims[0]*self.dims[1] + j, action.endStateIndex) in markedArrows:
+                        if (i*self.dims[0]*self.dims[1] + j, action) in markedArrows:
                             color = (255,255,0)
                             bwidth = 4
-                            if (i*self.dims[0]*self.dims[1] + j, action.endStateIndex) == currentAction:
+                            if (i*self.dims[0]*self.dims[1] + j, action) == currentAction:
                                 color = (0,255,0) # Current animation path
                         else:
                             color = Color('lightgray')
@@ -528,18 +579,18 @@ class Model:
                         if self.states[i*self.dims[0]*self.dims[1] + j].tag != 'P' or drawFromPunishment:
                             if self.states[i*self.dims[0]*self.dims[1] + j].tag != 'R' or drawFromReward:
                                 draw_arrow(screen, pygame.Vector2(j*(W+M)+M + W//2,i*(W+M)+M+ W//2),
-                                    pygame.Vector2((action.endStateIndex%(self.dims[0]*self.dims[1])*(W+M)+M+ W//2,action.endStateIndex//(self.dims[0]*self.dims[1])*(W+M)+M+ W//2)),color,head_width=16,head_height=8,body_width=bwidth)
+                                    pygame.Vector2((action%(self.dims[0]*self.dims[1])*(W+M)+M+ W//2,action//(self.dims[0]*self.dims[1])*(W+M)+M+ W//2)),color,head_width=16,head_height=8,body_width=bwidth)
             
             
             # First/Last layer actions
             i = self.dims[2]-1
             for j in range(self.dims[0]*self.dims[1]):        
                 # Draw actions
-                for action in self.actions[i*self.dims[0]*self.dims[1] + j]:
-                    if (i*self.dims[0]*self.dims[1] + j, action.endStateIndex) in markedArrows:
+                for action in self.states[i*self.dims[0]*self.dims[1] + j].actions.values():
+                    if (i*self.dims[0]*self.dims[1] + j, action) in markedArrows:
                         color = (255,255,0)
                         bwidth = 4
-                        if (i*self.dims[0]*self.dims[1] + j, action.endStateIndex) == currentAction:
+                        if (i*self.dims[0]*self.dims[1] + j, action) == currentAction:
                             color = (0,255,0) # Current animation path
                     else:
                         color = Color('lightgray')
@@ -553,9 +604,9 @@ class Model:
                     if self.states[i*self.dims[0]*self.dims[1] + j].tag != 'P' or drawFromPunishment:
                         if self.states[i*self.dims[0]*self.dims[1] + j].tag != 'R' or drawFromReward:
                             draw_arrow(screen, pygame.Vector2(j*(W+M)+M + W//2,i*(W+M)+M+ W//2),
-                                pygame.Vector2((action.endStateIndex%(self.dims[0]*self.dims[1])*(W+M)+M+ W//2,(i+1)*(W+M)+M+ W//2)),color,head_width=16,head_height=8,body_width=bwidth)
+                                pygame.Vector2((action%(self.dims[0]*self.dims[1])*(W+M)+M+ W//2,(i+1)*(W+M)+M+ W//2)),color,head_width=16,head_height=8,body_width=bwidth)
                             draw_arrow(screen, pygame.Vector2(j*(W+M)+M + W//2,-1*(W+M)+M+ W//2),
-                                pygame.Vector2((action.endStateIndex%(self.dims[0]*self.dims[1])*(W+M)+M+ W//2,(-1+1)*(W+M)+M+ W//2)),color,head_width=16,head_height=8,body_width=bwidth)
+                                pygame.Vector2((action%(self.dims[0]*self.dims[1])*(W+M)+M+ W//2,(-1+1)*(W+M)+M+ W//2)),color,head_width=16,head_height=8,body_width=bwidth)
 
         def hoverMouseActions():
             """
@@ -564,19 +615,19 @@ class Model:
             mposx, mposy = pygame.mouse.get_pos()
             stateindx, stateindy = mposx // (W+M), mposy // (W+M)
             stateindx, stateindy = min((self.dims[0])*(self.dims[1])-1,stateindx), min(self.dims[2]-1,stateindy)
-            actions = self.actions[stateindy*self.dims[0]*self.dims[1] + stateindx]
+            actions = self.states[stateindy*self.dims[0]*self.dims[1] + stateindx].actions.values()
             for action in actions:
                 color = Color('blue')
                 bwidth = 4
                 
                 if stateindy != self.dims[2]-1:
                     draw_arrow(screen, pygame.Vector2(stateindx*(M+W)+M + W//2,stateindy*(M+W)+M + W//2),
-                            pygame.Vector2((action.endStateIndex%(self.dims[0]*self.dims[1])*(W+M)+M+ W//2,action.endStateIndex//(self.dims[0]*self.dims[1])*(W+M)+M+ W//2)),color,head_width=16,head_height=8,body_width=bwidth)
+                            pygame.Vector2((action%(self.dims[0]*self.dims[1])*(W+M)+M+ W//2,action//(self.dims[0]*self.dims[1])*(W+M)+M+ W//2)),color,head_width=16,head_height=8,body_width=bwidth)
                 else: # top bottom
                     draw_arrow(screen, pygame.Vector2(stateindx*(W+M)+M + W//2,stateindy*(W+M)+M+ W//2),
-                            pygame.Vector2((action.endStateIndex%(self.dims[0]*self.dims[1])*(W+M)+M+ W//2,(stateindy+1)*(W+M)+M+ W//2)),color,head_width=16,head_height=8,body_width=bwidth)
+                            pygame.Vector2((action%(self.dims[0]*self.dims[1])*(W+M)+M+ W//2,(stateindy+1)*(W+M)+M+ W//2)),color,head_width=16,head_height=8,body_width=bwidth)
                     draw_arrow(screen, pygame.Vector2(stateindx*(W+M)+M + W//2,-1*(W+M)+M+ W//2),
-                            pygame.Vector2((action.endStateIndex%(self.dims[0]*self.dims[1])*(W+M)+M+ W//2,(-1+1)*(W+M)+M+ W//2)),color,head_width=16,head_height=8,body_width=bwidth)
+                            pygame.Vector2((action%(self.dims[0]*self.dims[1])*(W+M)+M+ W//2,(-1+1)*(W+M)+M+ W//2)),color,head_width=16,head_height=8,body_width=bwidth)
 
 
         # -------- Main Program Loop -----------
@@ -632,25 +683,55 @@ class Model:
         # Close the window and quit.
         pygame.quit()
 
-    def summary(self):
+    def summary(self,exportCSV=False):
+        
+        def exportToCSV():
+            # open the file in the write mode
+            with open('policy.csv', 'w+') as f:
+
+                # create the csv writer
+                writer = csv.writer(f)
+
+                # write a row to the csv file
+                headers = ['State', 'Tag', 'Value'] + self.moves
+                writer.writerow(headers)
+
+                # Write every row:
+                for ind,state in enumerate(self.states):
+                    data = [ind, state.tag, state.value]
+                    for item in self.moves:
+                        data.append(state.actions.get(item,"-"))
+                    writer.writerow(data)
+
+        
+        
         print(f"==== SUMMARY ====")
         print(f"Dimensions: {self.dims}")
         print(f"Number of states: {self.nrStates}")
-        print(f"Number of actions: {self.nrActions}")
+        print(f"Number of actions: {sum(len(self.states[i].actions) for i in range(self.nrStates))}")
         print(f"States:")
         for ind,state in enumerate(self.states):
-            print(f"State: {ind}, tag: {state.tag}, value: {state.value:.2f}, actions: {[c.endStateIndex for c in self.actions[ind]]}")
+            print(f"State: {ind}, tag: {state.tag}, value: {state.value:.2f}, actions: {state.actions}")
 
+        if exportCSV:
+            exportToCSV()
 
 def main():
     model = Model()
-    model.useFolder("grids")
-    model.__setup__(moveToItself=False)
-    
-    model.assignGridValues()
-    model.greedyPolicy()
+    model.useFolder("gridsclear")
+    model.moveToItself(False)
 
-    model.summary()
+    model.__setup__()
+    
+    model.assignGridValues(
+        mode='SARSA',
+        iterations=100, 
+        learningRate=0.9,
+        discountFactor=0.9,
+        epsilon=0.1)
+    
+    model.makePath()
+    model.summary(exportCSV=True)
 
     #model.drawAnimation(path=model.path)
     #model.drawModel()
