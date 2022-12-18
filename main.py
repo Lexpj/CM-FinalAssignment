@@ -1,17 +1,23 @@
+from mpl_toolkits.mplot3d import Axes3D
+import matplotlib.pyplot as plt
+from matplotlib import cm
+from matplotlib.ticker import LinearLocator
 import numpy as np
 import pygame
 from pygame.locals import *
-from random import uniform, choice
+from random import uniform, choice, randint
 import csv
+import matplotlib.pyplot as plt
+import sys
 
 class Environment:
 
-    def __init__(self,folder=None):
+    def __init__(self,folder=None,senseTime=True):
         Environment.POINTS = {
-            "P": -10,
+            "P": -100,
             "R": 100,
-            "S": 0,
-            ".": 0,
+            "S": -1,
+            ".": -1,
             "X": 0
         }
         Environment.TERMINAL = [
@@ -26,9 +32,15 @@ class Environment:
         self.nrActions = None
         self.actions = None
         self.startingState = None
+        self.startingTime = None
+        self.senseTime = senseTime
 
         self.Q = None
-        self.totalGenerations = 0
+        self.totalGenerations = None
+
+        self.method = None
+        self.policyargs = None
+        self.cumulativeRewards = None
 
     # =============== #
     #      STATE      #
@@ -88,6 +100,9 @@ class Environment:
                         self.states[grid][row*self.dims[0] + col].setTag(self.grids[grid][row][col])
                         if self.states[grid][row*self.dims[0] + col].tag == 'S':   # Set starting state
                             self.startingState = (grid,row*self.dims[0] + col)
+            
+            if self.startingState == None:
+                raise Exception("No start state S found!")
 
         def __defineActions__():
             normalState = []
@@ -133,6 +148,7 @@ class Environment:
         self.Q = [[0 for _ in range(self.nrActions)] for _ in range(self.nrStates)]
         __flattenStates__()
         __defineActions__()
+        self.resetPolicy()
             
     # =============== #
     #      DRAW       #
@@ -154,7 +170,7 @@ class Environment:
             for ind, state in enumerate(row):
                 print((time,ind),self.getActions((time,ind)))
     
-    def draw(self,drawAnimation=True,drawModel=True,train=None,args=[]):
+    def draw(self,drawAnimation=True,drawModel=True,train=False):
         """
         Draws the state-transition diagram
         Could be gigantic, beware!
@@ -183,8 +199,8 @@ class Environment:
         # Functionalities:
         mouseHover = False           # To show actions of state you are currently hovering over
         autoAnimation = True         # Play animation
-        c = 0                        # Current time step
         moves = self.getPath()       # Add empty move, to show last state
+        c = 0                        # Loop through steps
 
         heatmapAnimation = [[0 for _ in range(self.dims[0])] for _ in range(self.dims[1])]
         heatmap = [[0 for _ in range(self.dims[0]*self.dims[1])] for _ in range(self.dims[2])]
@@ -192,7 +208,7 @@ class Environment:
         def movesToPath(m):
             # Convert moves into path
             if m != None:
-                marked = [self.startingState]
+                marked = [(self.startingTime,self.startingState[1])]
                 for i in m:
                     marked.append(self.doAction(marked[-1],i))
             else:
@@ -385,6 +401,7 @@ class Environment:
 
         path = movesToPath(moves)
         moves.append((0,0))
+
         # -------- Main Program Loop -----------
         while not done:
             # Events
@@ -411,7 +428,7 @@ class Environment:
             screen.fill(BLACK)
             
             # Draws all states
-            grid = self.grids[c%self.dims[2]]
+            grid = self.grids[(c+self.startingTime)%self.dims[2]]
             if drawAnimation:
                 drawStatesAnimation(grid,path[c])
             if drawModel:
@@ -439,8 +456,8 @@ class Environment:
             # reset animation if path exists
             if path != None:
                 c = (c+len(path))%len(path)
-                if c == 0 and train != None:
-                    train(*args)
+                if c == 0 and train:
+                    self.updatePolicy(1)
                     moves = self.getPath()
                     path = movesToPath(moves)
                     moves.append((0,0))
@@ -449,32 +466,136 @@ class Environment:
         
         # Close the window and quit.
         pygame.quit()
+    
+    def draw3D(self):
+        """
+        Draws a matplotlib model in 3D
+        """
+        def getColors(i):
+            lst = []
+            for row in self.grids[i]:
+                colors = []
+                for col in row:
+                    if col == 'S':
+                        colors.append(np.array([1,1,0]))
+                    elif col == 'X':
+                        colors.append(np.array([0,0,0]))
+                    elif col == 'R':
+                        colors.append(np.array([0,1,0]))
+                    elif col == 'P':
+                        colors.append(np.array([1,0,0]))
+                    else:
+                        colors.append(np.array([0.8,0.8,0.8]))
+                colors.append([0,0,0])
+                lst.append(colors)
+            
+            # Extra grid row
+            colors = []
+            for col in row:
+                colors.append(np.array([0,0,0]))
+            colors.append(np.array([0,0,0]))
+            
+            lst.append(np.array(colors))
+            return np.array(lst)
+                    
+        fig = plt.figure()
+        ax = fig.add_subplot(projection='3d')
+
+        X = np.arange(0,self.dims[0]+1,1)
+        Z = np.arange(0,self.dims[1]+1,1)
+        X, Z = np.meshgrid(X, Z)
+        ax.set_xlabel('Width')
+        ax.set_ylabel('Time')
+        ax.set_zlabel('Height')
+        ax.set_xticks([])
+        ax.set_yticks([i for i in range(0,self.dims[2]+1)])
+        ax.set_zticks([])
+        ax.invert_zaxis()
+        ax.set_box_aspect((1,5,1))
+        ax.xaxis.pane.fill = False
+        ax.yaxis.pane.fill = False
+        ax.zaxis.pane.fill = False
+
+        # Draw arrows
+        for time,row in enumerate(self.states):
+            for ind, state in enumerate(row):
+                for action in self.getActions((time,ind)):
+                    ax.quiver(ind%self.dims[0] + 0.5,time+1,ind//self.dims[0] + 0.5,
+                              action[0],1,action[1],color=[0.9,0.9,0.9])
+            
+        # Draw grids
+        for i in range(self.dims[2]):
+            C = getColors(i)
+            ax.plot_surface(X, np.ones(shape=X.shape)+i, Z, facecolors=C, linewidth=0)
+        
+        plt.show()
 
     # =============== #
     #     POLICY      #
     # =============== #
+    
+    def importPolicy(self,policy):
+        pass
 
-    def updatePolicy(self,method,
-                    learningRate=0.9,
-                    discountFactor=0.9,
-                    epsilon=0.1,
-                    iterations=1
-                    ):
+    def setPolicy(self,method,args,randomQ):
+        """
+        Sets the policy method used to train
+        param method: method in ["Bellman","SARSA","QLearning"]
+        param args: tuple in the form of (alpha, gamma, epsilon, iterations)
+        param randomQ: bool whether all states start on 0 or random
+        """
+        self.method = method  
+        self.policyargs = args   
+        self.cumulativeRewards = []
+        self.totalGenerations = 0
+
+        if randomQ:
+            # random initialization of the Q values
+            self.Q = [[randint(min(Environment.POINTS.values()), max(Environment.POINTS.values())) for _ in range(self.nrActions)] for _ in range(self.nrStates)]
+            
+            # However, terminal states = 0
+            for time in range(self.dims[2]):
+                for state in range(self.dims[1]*self.dims[0]):
+                    if self.states[time][state].isTerminal:
+                        for action in range(self.nrActions):
+                            self.Q[time*self.dims[1]*self.dims[0] + state][action] = 0
+        else:
+            self.Q = [[0 for _ in range(self.nrActions)] for _ in range(self.nrStates)]
+        
+    def resetPolicy(self):
+        if self.nrStates == None:
+            raise Exception("resetPolicy() can only be run after setup()")
+        
+        self.Q = None
+        self.totalGenerations = None
+        self.method = None
+        self.policyargs = None
+        self.cumulativeRewards = None
+
+    def updatePolicy(self,episodes):
         """
         Master function calling policy functions
+        :param episodes: the amount of iterations to train for
         """
-        if method == "Bellman":
+        if self.method == None:
+            raise Exception("setPolicy(method,args) must be run before updatePolicy()")
+
+        learningRate, discountFactor, epsilon = self.policyargs
+
+        if self.method == "Bellman":
             self.Bellman()
-        elif method == "SARSA":
+        elif self.method == "SARSA":
             self.SARSA(alpha=learningRate,
                             gamma=discountFactor,
                             epsilon=epsilon,
-                            iterations=iterations)
-        elif method == "QLearning":
+                            iterations=episodes)
+        elif self.method == "QLearning":
             self.QLearning(alpha=learningRate,
                             gamma=discountFactor,
                             epsilon=epsilon,
-                            iterations=iterations)
+                            iterations=episodes)
+        else:
+            raise Exception(f"Method {self.method} not found")
 
     def getQ(self,s,a):
         """
@@ -485,14 +606,14 @@ class Environment:
             return 0
         
         # If move not possible:
-        if not a in self.states[s[0]][s[1]].actions.keys():
-            return 0
+        #if not a in self.states[s[0]][s[1]].actions.keys():
+        #    return 0
         
         # New state
-        time, action = self.states[s[0]][s[1]].actions[a]
-        if self.states[time][action].isTerminal:
-            # If your move is to a terminal state, return value of the terminal state instead
-            return self.states[time][action].value
+        # time, action = self.states[s[0]][s[1]].actions[a]
+        # if self.states[time][action].isTerminal:
+        #     # If your move is to a terminal state, return value of the terminal state instead
+        #     return self.states[time][action].value
 
         return self.Q[s[0]*self.dims[0]*self.dims[1] + s[1]][self.actions.index(a)]
 
@@ -552,17 +673,22 @@ class Environment:
             return a
         
         for iteration in range(iterations):
+
+            sys.stdout.write("\r [" + "="*int(((iteration+1)/iterations) * 20) + "."*(20-(int(((iteration+1)/iterations) * 20))) +f"] SARSA ITERATION={iteration+1}     ")
+            sys.stdout.flush()
+            
+            cumReward = []
             # initialize S
-            state = self.startingState
+            state = self.getStartingState()
+            path = []
             # Choose A from S using e-greedy
             action = pickAction(state)
             # While not terminal
             while not self.states[state[0]][state[1]].isTerminal: 
                 # Take action A, observe R, S'(=A)
-                
+                path.append(state)
                 stateprime = self.doAction(state,action)
                 reward = Environment.POINTS[self.states[stateprime[0]][stateprime[1]].tag]
-
                 
                 # Choose A' from S' using e-greedy
                 actionprime = pickAction(stateprime)
@@ -572,11 +698,15 @@ class Environment:
 
                 newqsa = self.getQ(state,action) + alpha * (reward + gamma*maxExpectedFutureReward - self.getQ(state,action))
                 self.setQ(state,action,newqsa)
+                cumReward.append(reward)
 
                 # Update states and actions
                 state = stateprime
                 action = actionprime
-        
+
+            # For plotting
+            self.cumulativeRewards.append(sum(cumReward)/len(cumReward))
+        print()
         print(f"Performed SARSA equation, {iterations} iterations.")
         self.totalGenerations += iterations
         self.__exportToCSV__()
@@ -599,8 +729,13 @@ class Environment:
             return a
         
         for iteration in range(iterations):
+            
+            sys.stdout.write("\r [" + "="*int(((iteration+1)/iterations) * 20) + "."*(20-(int(((iteration+1)/iterations) * 20))) +f"] QLEARNING ITERATION={iteration+1}     ")
+            sys.stdout.flush()
+            
+            cumReward = []
             # initialize S
-            state = self.startingState
+            state = self.getStartingState()
             
             # While not terminal
             while not self.states[state[0]][state[1]].isTerminal: 
@@ -620,10 +755,14 @@ class Environment:
 
                 newqsa = self.getQ(state,action) + alpha * (reward + gamma*maxExpectedFutureReward - self.getQ(state,action))
                 self.setQ(state,action,newqsa)
+                
+                cumReward.append(reward)
 
                 # Update state
                 state = stateprime
-        
+            
+            self.cumulativeRewards.append(sum(cumReward)/len(cumReward))
+        print()
         print(f"Performed QLearning equation, {iterations} iterations.")
         self.totalGenerations += iterations
         self.__exportToCSV__()
@@ -631,6 +770,16 @@ class Environment:
     # =============== #
     #     CONTROL     #
     # =============== #   
+
+    def getStartingState(self):
+        """
+        Get a random starting state concerning time, if self.senseTime==False
+        """
+        if self.senseTime:
+            self.startingTime = self.startingState[0]
+            return self.startingState
+        self.startingTime = randint(0,self.dims[2]-1)
+        return (self.startingTime,self.startingState[1])
 
     def getActions(self,s):
         """
@@ -650,7 +799,7 @@ class Environment:
         return self.states[s[0]][s[1]].actions[a]
 
     def getPath(self):
-        curTime, curPos = self.startingState
+        curTime, curPos = self.getStartingState()
         path = []
         states = [(curTime, curPos)]
         while not self.states[curTime][curPos].isTerminal \
@@ -669,7 +818,7 @@ class Environment:
 
     def __exportToCSV__(self):
         # open the file in the write mode
-        with open('policy.csv', 'w+') as f:
+        with open(f'{self.method}.csv', 'w+') as f:
 
             # create the csv writer
             writer = csv.writer(f)
@@ -686,7 +835,7 @@ class Environment:
                         data.append(self.getQ((time,col),item))
                     writer.writerow(data)
             
-        print(f"Saved policy of {self.totalGenerations} generations to policy.csv")
+        print(f"Saved policy of {self.totalGenerations} generations to {self.method}.csv")
 
     def summary(self,exportCSV=False,elaborate=False):
         print(f"==== SUMMARY ====")
@@ -703,24 +852,87 @@ class Environment:
         if exportCSV:
             self.__exportToCSV__()
 
-def main():
-    # Setup the environment
-    env = Environment("predator")
-    env.defineActions([(0,1),(1,0),(-1,0),(0,-1),(0,0),(1,1),(1,-1),(-1,1),(-1,-1)])
+
+def cumulativeAverage(lst):
+    return [np.mean(lst[:i]) for i in range(1,len(lst)+1)]
+
+def compareAlgorithms(folder,args,episodes,randomQ):
+    env = Environment(folder)
+    env.defineActions([(0,1),(1,0),(-1,0),(0,-1),(1,1),(1,-1),(-1,1),(-1,-1)])
     env.setup()
-    env.updatePolicy("SARSA",
-                        learningRate=0.9,
-                        discountFactor=0.9,
-                        epsilon=0.1,
-                        iterations=1
-                        )
+
+    env.setPolicy("SARSA",args,randomQ)
+    env.updatePolicy(episodes=episodes)
+    SARSA = env.cumulativeRewards.copy()
+
+    env.resetPolicy()
+    env.setPolicy("QLearning",args,randomQ)
+    env.updatePolicy(episodes=episodes)
+    QLEARNING = env.cumulativeRewards.copy()
+
+    SARSA = cumulativeAverage(SARSA)
+    QLEARNING = cumulativeAverage(QLEARNING)
+
+    points = 100
+    plt.plot(list(range(0,episodes,episodes//points)),[SARSA[i] for i in range(0,episodes,episodes//points)],label="SARSA")
+    plt.plot(list(range(0,episodes,episodes//points)),[QLEARNING[i] for i in range(0,episodes,episodes//points)],label="QLearning")
+    plt.legend()
+    plt.xlabel("Episodes")
+    plt.ylabel("Cumulative average reward")
+    plt.show()
+
+def compareSenses(folder, mode, args, episodes, randomQ):
+    # With sense of time
+    env = Environment(folder,senseTime=True)
+    env.defineActions([(0,1),(1,0),(-1,0),(0,-1)])
+    env.setup()
+
+    env.setPolicy(mode, args, randomQ)
+    env.updatePolicy(episodes)
+    timeSense = env.cumulativeRewards.copy()
+
+    # Without sense of time
+    envNoTime = Environment(folder, senseTime=False)
+    envNoTime.defineActions([(0,1),(1,0),(-1,0),(0,-1)])
+    envNoTime.setup()
+
+    envNoTime.setPolicy(mode, args, randomQ)
+    envNoTime.updatePolicy(episodes)
+    noTimeSense = envNoTime.cumulativeRewards.copy()
+
+    timeSense = cumulativeAverage(timeSense)
+    noTimeSense = cumulativeAverage(noTimeSense)
+
+    # Plot:
+    points = 100
+    plt.plot(list(range(0,episodes,episodes//points)),[timeSense[i] for i in range(0,episodes,episodes//points)],label='Sense of time')
+    plt.plot(list(range(0,episodes,episodes//points)),[noTimeSense[i] for i in range(0,episodes,episodes//points)],label="No sense of time")
+    plt.legend()
+    plt.xlabel("Episodes")
+    plt.ylabel("Cumulative average reward")
+    plt.show()
+
+
+
+def main():
+
+    compareAlgorithms("gridworld",(0.9,0.9,0.1),episodes=500,randomQ=False)
+    
+    compareSenses("lvl3", "SARSA", (0.9,0.9,0.1), episodes=1000, randomQ=True)
+    return
+    # Setup the environment
+
+    env = Environment("grids",senseTime=False)
+    env.defineActions([(0,1),(1,0),(-1,0),(0,-1),(0,0)])
+    env.setup()
+    env.setPolicy("QLearning",(0.1,0.9,0.3),episodes=10000,randomQ=False)
+    env.updatePolicy(episodes=100000)
+    env.draw3D()
     env.summary(exportCSV=True)
 
     env.draw(drawAnimation=True,
              drawModel=True,
-             train=env.SARSA,
-             args = (0.9,0.9,0.1,1)
-            )
+             train=True)
 
 
 if __name__ == "__main__":

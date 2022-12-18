@@ -29,7 +29,7 @@ class Generator:
                 self.grid = [[x for x in line.rstrip()] for line in f.readlines()]
 
         else:
-            print("Set a folder first!")
+            raise Exception("Set a folder first!")
     
     def generate(self,summary=True):
         """
