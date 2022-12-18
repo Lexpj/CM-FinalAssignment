@@ -12,7 +12,17 @@ import sys
 
 class Environment:
 
-    def __init__(self,folder=None,senseTime=True):
+    def __init__(self,folder: str = None, senseTime: bool = True) -> None:
+        """
+        Parameters
+        ----------
+        `folder`:`str`, the environment folder that is used
+        `senseTime`:`bool`, whether there is a sense of time in the environment
+        If this is the case, the `startingState` is always the unique state `S` found in
+        the environment at a specific time. This comes down to a static `startingState = (time, pos)` 
+        If this is not the case, the `startingState`'s position is the same, but time may differ.
+        This comes down to `startingState = (t, pos)` for random `t` in `[0,dims[2]]`
+        """
         Environment.POINTS = {
             "P": -100,
             "R": 100,
@@ -47,13 +57,26 @@ class Environment:
     # =============== #
 
     class State:
-        def __init__(self):
+        """
+        State class. Holds a few variables:
+        `value`:`int`, the value of a state defined by its `tag`
+        `tag`:`str`, the tag of a state. Can be any of `['.','P','R','S','X']`
+        `isTerminal`:`bool`, whether the state is an end state
+        `actions`:`dic{move:state}`, all possible actions along with their next state
+        """
+        def __init__(self) -> None:
             self.value = None
             self.tag = None
             self.isTerminal = None
             self.actions = {}
         
-        def setTag(self,tag):
+        def setTag(self,tag: str) -> None:
+            """
+            Sets the tag of a state, along with the corresponding `value` and `isTerminal` values
+            Parameters
+            ----------
+            `tag`:`str`: the tag of a state. Can be any of `['.','P','R','S','X']`
+            """
             self.tag = tag
             self.value = Environment.POINTS[tag]
             self.isTerminal = tag in Environment.TERMINAL
@@ -62,11 +85,37 @@ class Environment:
     #      SETUP      #
     # =============== #
 
-    def defineActions(self,actions):
+    def defineActions(self,actions: list) -> None:
+        """
+        Defines the actions in this environment.\n
+        Parameters
+        ---------
+        `actions`:`list[tuple(int,int)]`, a list of tuples of every action possible in the environment
+        An action is defined as a move in the `x` direction and a move in the `y` direction. 
+        A tuple is thus defined as `(dx,dy)`. 
+
+        Example
+        ---------
+        A list of actions which allows the agent to move up, down, left and right is the following:\n
+        `actions = [(0,1),(1,0),(0,-1),(-1,0)]`\n
+        An addition to this list is a move to itself, which allows the agent to stand still:\n
+        `action = [(0,1),(1,0),(0,-1),(-1,0),(0,0)]`\n
+        Lastly, an agent that is able to do kingsmoves, is the following:\n
+        `action = [(0,1),(1,0),(0,-1),(-1,0),(-1,-1),(1,-1),(-1,1),(1,1)]`
+        """
         self.actions = actions
         self.nrActions = len(actions)
 
-    def setup(self):
+    def setup(self) -> None:
+        """
+        Setup of the environment. \n
+        This reads the environment folder, sets up all states and connects them via actions.\n
+        Furthermore, the policy is reset. This has to be independently defined later by `setPolicy(method, args, randomQ)`
+        Prerequisites
+        --------
+        - The `actions` are set using `defineActions(actions)`\n
+        - A valid `folder` is set with at least one level `0.txt`.\n
+        """
 
         def __readFiles__():
 
@@ -145,7 +194,6 @@ class Environment:
 
         self.dims, self.grids = __readFiles__()
         self.nrStates = self.dims[0]*self.dims[1]*self.dims[2]
-        self.Q = [[0 for _ in range(self.nrActions)] for _ in range(self.nrStates)]
         __flattenStates__()
         __defineActions__()
         self.resetPolicy()
@@ -154,7 +202,10 @@ class Environment:
     #      DRAW       #
     # =============== #
 
-    def printEnvironment(self):
+    def printEnvironment(self) -> None:
+        """
+        Prints a simplified version of the states, along with all actions
+        """
         # First print the grid
         print("==========")
         print("MAP:")
@@ -168,14 +219,23 @@ class Environment:
         print("==========")
         for time,row in enumerate(self.states):
             for ind, state in enumerate(row):
-                print((time,ind),self.getActions((time,ind)))
+                print((time,ind),self.__getActions__((time,ind)))
     
-    def draw(self,drawAnimation=True,drawModel=True,train=False):
+    def draw(self,drawAnimation: bool = True, drawModel: bool = True, train: bool = False) -> None:
         """
         Draws the state-transition diagram
-        Could be gigantic, beware!
-        If a path is generated (for example greedyPolicy), it will draw
-        the arrows of transition in gold
+        Could be gigantic, beware!\n
+        Prerequisites
+        ---------
+        - The model is set up using `setup()`\n
+        Parameters
+        ---------
+        `drawAnimation`:`bool`, whether the animation is drawn. 
+        This animation shows the path the agent takes with the current policy. 
+        `drawModel`:`bool`, whether the model is drawn. The model draws the transition
+        diagram between states.
+        `train`:`bool`, whether the policy is updated throughout the animation. Prerequisite is
+        that a policy is set using `setPolicy(mode, args, randomQ)`. The policy is updated with `episodes=1`.  
         """
         ##### PYGAME INIT ######
         BLACK = (0, 0, 0)
@@ -199,7 +259,7 @@ class Environment:
         # Functionalities:
         mouseHover = False           # To show actions of state you are currently hovering over
         autoAnimation = True         # Play animation
-        moves = self.getPath()       # Add empty move, to show last state
+        moves = self.__getPath__()       # Add empty move, to show last state
         c = 0                        # Loop through steps
 
         heatmapAnimation = [[0 for _ in range(self.dims[0])] for _ in range(self.dims[1])]
@@ -210,7 +270,7 @@ class Environment:
             if m != None:
                 marked = [(self.startingTime,self.startingState[1])]
                 for i in m:
-                    marked.append(self.doAction(marked[-1],i))
+                    marked.append(self.__doAction__(marked[-1],i))
             else:
                 marked = []
             return marked
@@ -458,7 +518,7 @@ class Environment:
                 c = (c+len(path))%len(path)
                 if c == 0 and train:
                     self.updatePolicy(1)
-                    moves = self.getPath()
+                    moves = self.__getPath__()
                     path = movesToPath(moves)
                     moves.append((0,0))
                         
@@ -467,7 +527,7 @@ class Environment:
         # Close the window and quit.
         pygame.quit()
     
-    def draw3D(self):
+    def draw3D(self) -> None:
         """
         Draws a matplotlib model in 3D
         """
@@ -519,7 +579,7 @@ class Environment:
         # Draw arrows
         for time,row in enumerate(self.states):
             for ind, state in enumerate(row):
-                for action in self.getActions((time,ind)):
+                for action in self.__getActions__((time,ind)):
                     ax.quiver(ind%self.dims[0] + 0.5,time+1,ind//self.dims[0] + 0.5,
                               action[0],1,action[1],color=[0.9,0.9,0.9])
             
@@ -537,12 +597,14 @@ class Environment:
     def importPolicy(self,policy):
         pass
 
-    def setPolicy(self,method,args,randomQ):
+    def setPolicy(self,method: str, args: tuple, randomQ: bool) -> None:
         """
-        Sets the policy method used to train
-        param method: method in ["Bellman","SARSA","QLearning"]
-        param args: tuple in the form of (alpha, gamma, epsilon, iterations)
-        param randomQ: bool whether all states start on 0 or random
+        Sets the policy method used to train\n
+        Parameters
+        --------
+        `method`:`str`, method in `["Bellman","SARSA","QLearning"]`
+        `args`:`tuple`, tuple in the form of `(alpha, gamma, epsilon)`
+        `randomQ`:`bool`, whether all states start on 0 or random
         """
         self.method = method  
         self.policyargs = args   
@@ -562,7 +624,14 @@ class Environment:
         else:
             self.Q = [[0 for _ in range(self.nrActions)] for _ in range(self.nrStates)]
         
-    def resetPolicy(self):
+    def resetPolicy(self) -> None:
+        """
+        Resets the policy. A new policy has to be set for training
+        using `setPolicy(method, args, randomQ)`\n
+        Prerequisites:
+        --------
+        - `resetPolicy()` can only be run after `setup()`
+        """
         if self.nrStates == None:
             raise Exception("resetPolicy() can only be run after setup()")
         
@@ -572,32 +641,38 @@ class Environment:
         self.policyargs = None
         self.cumulativeRewards = None
 
-    def updatePolicy(self,episodes):
+    def updatePolicy(self, episodes: int) -> None:
         """
-        Master function calling policy functions
-        :param episodes: the amount of iterations to train for
+        Master function calling policy functions\n
+        Prerequisites:
+        --------
+        - `setPolicy(method,args,randomQ)` must be run before `updatePolicy()`\n
+        - The set `method` must be in `['Bellman','SARSA','QLearning']`\n
+        Parameters:
+        --------
+        `episodes`:`int`: the amount of iterations to train for
         """
         if self.method == None:
-            raise Exception("setPolicy(method,args) must be run before updatePolicy()")
+            raise Exception("setPolicy(method,args,randomQ) must be run before updatePolicy()")
 
         learningRate, discountFactor, epsilon = self.policyargs
 
         if self.method == "Bellman":
-            self.Bellman()
+            self.__Bellman__()
         elif self.method == "SARSA":
-            self.SARSA(alpha=learningRate,
+            self.__SARSA__(alpha=learningRate,
                             gamma=discountFactor,
                             epsilon=epsilon,
                             iterations=episodes)
         elif self.method == "QLearning":
-            self.QLearning(alpha=learningRate,
+            self.__QLearning__(alpha=learningRate,
                             gamma=discountFactor,
                             epsilon=epsilon,
                             iterations=episodes)
         else:
             raise Exception(f"Method {self.method} not found")
 
-    def getQ(self,s,a):
+    def __getQ__(self,s,a):
         """
         s is a tuple (t,s)
         """
@@ -617,16 +692,16 @@ class Environment:
 
         return self.Q[s[0]*self.dims[0]*self.dims[1] + s[1]][self.actions.index(a)]
 
-    def setQ(self,s,a,value):
+    def __setQ__(self,s,a,value):
         self.Q[s[0]*self.dims[0]*self.dims[1] + s[1]][self.actions.index(a)] = value
 
-    def optimalQ(self, s):
+    def __optimalQ__(self, s):
         """
         Get the optimal action from a current state
         """
-        return max((self.getQ(s,a),a) for a in self.getActions(s))[1]
+        return max((self.__getQ__(s,a),a) for a in self.__getActions__(s))[1]
 
-    def Bellman(self):
+    def __Bellman__(self):
 
         alpha = 0.9 # learning rate
         gamma = 0.9 # discount factor
@@ -637,17 +712,17 @@ class Environment:
             for time in range(self.dims[2]):
                 for col in range(self.dims[0]*self.dims[1]):
 
-                    for action in self.getActions((time,col)):
+                    for action in self.__getActions__((time,col)):
                         
-                        qa = self.getQ((time,col),action)
+                        qa = self.__getQ__((time,col),action)
                         reward = Environment.POINTS[self.states[time][col].tag]
 
-                        timeprime, colprime = self.doAction((time,col),action)
-                        maxExpectedFutureReward = max(self.getQ((timeprime,colprime),actionprime) for actionprime in self.getActions((timeprime,colprime)))
+                        timeprime, colprime = self.__doAction__((time,col),action)
+                        maxExpectedFutureReward = max(self.__getQ__((timeprime,colprime),actionprime) for actionprime in self.__getActions__((timeprime,colprime)))
 
                         # Set new Q(S,A)
                         newqsa = qa + alpha*(reward + gamma*maxExpectedFutureReward - qa)
-                        self.setQ((time, col), action, newqsa)
+                        self.__setQ__((time, col), action, newqsa)
 
                     
         
@@ -655,7 +730,7 @@ class Environment:
         self.totalGenerations += iterations
         self.__exportToCSV__()
 
-    def SARSA(self, alpha, gamma, epsilon, iterations):
+    def __SARSA__(self, alpha, gamma, epsilon, iterations):
 
         def pickAction(s):
             
@@ -666,9 +741,9 @@ class Environment:
             randomNumber = uniform(0,1)
             
             if randomNumber <= epsilon: # random action
-                a = choice(list(self.getActions(s)))
+                a = choice(list(self.__getActions__(s)))
             else:                       # greedy action
-                a = max((self.getQ(s,a),a) for a in self.getActions(s))[1]
+                a = max((self.__getQ__(s,a),a) for a in self.__getActions__(s))[1]
 
             return a
         
@@ -679,7 +754,7 @@ class Environment:
             
             cumReward = []
             # initialize S
-            state = self.getStartingState()
+            state = self.__getStartingState__()
             path = []
             # Choose A from S using e-greedy
             action = pickAction(state)
@@ -687,17 +762,17 @@ class Environment:
             while not self.states[state[0]][state[1]].isTerminal: 
                 # Take action A, observe R, S'(=A)
                 path.append(state)
-                stateprime = self.doAction(state,action)
+                stateprime = self.__doAction__(state,action)
                 reward = Environment.POINTS[self.states[stateprime[0]][stateprime[1]].tag]
                 
                 # Choose A' from S' using e-greedy
                 actionprime = pickAction(stateprime)
 
                 # Q(S,A) = Q(S,A) + a[R + yQ(S',A') - Q(S,A)] # NOT IN TERMINAL STATE:
-                maxExpectedFutureReward = self.getQ(stateprime,actionprime)
+                maxExpectedFutureReward = self.__getQ__(stateprime,actionprime)
 
-                newqsa = self.getQ(state,action) + alpha * (reward + gamma*maxExpectedFutureReward - self.getQ(state,action))
-                self.setQ(state,action,newqsa)
+                newqsa = self.__getQ__(state,action) + alpha * (reward + gamma*maxExpectedFutureReward - self.__getQ__(state,action))
+                self.__setQ__(state,action,newqsa)
                 cumReward.append(reward)
 
                 # Update states and actions
@@ -711,7 +786,7 @@ class Environment:
         self.totalGenerations += iterations
         self.__exportToCSV__()
     
-    def QLearning(self, alpha, gamma, epsilon, iterations):
+    def __QLearning__(self, alpha, gamma, epsilon, iterations):
         
         def pickAction(s):
             
@@ -722,9 +797,9 @@ class Environment:
             randomNumber = uniform(0,1)
             
             if randomNumber <= epsilon: # random action
-                a = choice(list(self.getActions(s)))
+                a = choice(list(self.__getActions__(s)))
             else:                       # greedy action
-                a = max((self.getQ(s,a),a) for a in self.getActions(s))[1]
+                a = max((self.__getQ__(s,a),a) for a in self.__getActions__(s))[1]
 
             return a
         
@@ -735,7 +810,7 @@ class Environment:
             
             cumReward = []
             # initialize S
-            state = self.getStartingState()
+            state = self.__getStartingState__()
             
             # While not terminal
             while not self.states[state[0]][state[1]].isTerminal: 
@@ -744,17 +819,17 @@ class Environment:
                 action = pickAction(state)
 
                 # Take action A, observe R, S'(=A)
-                stateprime = self.doAction(state,action)
+                stateprime = self.__doAction__(state,action)
                 reward = Environment.POINTS[self.states[stateprime[0]][stateprime[1]].tag]
 
                 # Q(S,A) = Q(S,A) + a[R + ymaxQ(S',a) - Q(S,A)] # NOT IN TERMINAL STATE:
-                if list(self.getActions(stateprime)):
-                    maxExpectedFutureReward = max(self.getQ(stateprime,actionprime) for actionprime in self.getActions(stateprime))
+                if list(self.__getActions__(stateprime)):
+                    maxExpectedFutureReward = max(self.__getQ__(stateprime,actionprime) for actionprime in self.__getActions__(stateprime))
                 else:
                     maxExpectedFutureReward = 0
 
-                newqsa = self.getQ(state,action) + alpha * (reward + gamma*maxExpectedFutureReward - self.getQ(state,action))
-                self.setQ(state,action,newqsa)
+                newqsa = self.__getQ__(state,action) + alpha * (reward + gamma*maxExpectedFutureReward - self.__getQ__(state,action))
+                self.__setQ__(state,action,newqsa)
                 
                 cumReward.append(reward)
 
@@ -771,7 +846,7 @@ class Environment:
     #     CONTROL     #
     # =============== #   
 
-    def getStartingState(self):
+    def __getStartingState__(self):
         """
         Get a random starting state concerning time, if self.senseTime==False
         """
@@ -781,7 +856,7 @@ class Environment:
         self.startingTime = randint(0,self.dims[2]-1)
         return (self.startingTime,self.startingState[1])
 
-    def getActions(self,s):
+    def __getActions__(self,s):
         """
         get actions for a specific time and a specific state
         param t: 0 <= t < self.dims[2]
@@ -790,7 +865,7 @@ class Environment:
         """
         return self.states[s[0]][s[1]].actions.keys()
 
-    def doAction(self,s,a):
+    def __doAction__(self,s,a):
         """
         returns the next state
         param s: current state
@@ -798,15 +873,15 @@ class Environment:
         """
         return self.states[s[0]][s[1]].actions[a]
 
-    def getPath(self):
-        curTime, curPos = self.getStartingState()
+    def __getPath__(self):
+        curTime, curPos = self.__getStartingState__()
         path = []
         states = [(curTime, curPos)]
         while not self.states[curTime][curPos].isTerminal \
             and len(set(states)) == len(states):
-            move = self.optimalQ((curTime,curPos))
+            move = self.__optimalQ__((curTime,curPos))
             path.append(move)
-            curTime, curPos = self.doAction((curTime,curPos),move)
+            curTime, curPos = self.__doAction__((curTime,curPos),move)
             states.append((curTime,curPos))
 
         #print(f"Moves found: {path}")
@@ -832,7 +907,7 @@ class Environment:
                 for col,state in enumerate(self.states[time]):
                     data = [(time,col), state.tag, state.value]
                     for item in self.actions:
-                        data.append(self.getQ((time,col),item))
+                        data.append(self.__getQ__((time,col),item))
                     writer.writerow(data)
             
         print(f"Saved policy of {self.totalGenerations} generations to {self.method}.csv")
@@ -841,7 +916,7 @@ class Environment:
         print(f"==== SUMMARY ====")
         print(f"Dimensions: {self.dims}")
         print(f"Number of states: {self.nrStates}")
-        print(f"Number of actions: {sum([len(self.getActions((i,j))) for i in range(self.dims[2]) for j in range(self.dims[0]*self.dims[1])])}")
+        print(f"Number of actions: {sum([len(self.__getActions__((i,j))) for i in range(self.dims[2]) for j in range(self.dims[0]*self.dims[1])])}")
         print(f"=================")
         if elaborate:
             print(f"States:")
