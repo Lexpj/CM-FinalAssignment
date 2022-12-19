@@ -12,7 +12,8 @@ import sys
 
 class Environment:
 
-    def __init__(self,folder: str = None, senseTime: bool = True) -> None:
+    def __init__(self,folder: str = None, senseTime: bool = True,
+                backToStartOnP: bool = False) -> None:
         """
         Parameters
         ----------
@@ -22,6 +23,8 @@ class Environment:
         the environment at a specific time. This comes down to a static `startingState = (time, pos)` 
         If this is not the case, the `startingState`'s position is the same, but time may differ.
         This comes down to `startingState = (t, pos)` for random `t` in `[0,dims[2]]`
+        `backToStartOnP`:`bool`, episode doesn't end on a P tagged state, but sends you back to the start.
+        This comes with the prerequisite that P is not in `Environment.TERMINAL`.
         """
         Environment.POINTS = {
             "P": -100,
@@ -30,9 +33,7 @@ class Environment:
             ".": -1,
             "X": 0
         }
-        Environment.TERMINAL = [
-            'R', 'P'
-        ]
+        Environment.TERMINAL = ['R'] if backToStartOnP else ['R','P']
         self.grids = None
         self.dims = None
         self.folder = folder
@@ -41,6 +42,7 @@ class Environment:
         self.states = None
         self.nrActions = None
         self.actions = None
+        self.backToStartOnP = backToStartOnP
         self.startingState = None
         self.startingTime = None
         self.senseTime = senseTime
@@ -51,6 +53,7 @@ class Environment:
         self.method = None
         self.policyargs = None
         self.cumulativeRewards = None
+        self.randomQ = None
 
     # =============== #
     #      STATE      #
@@ -177,7 +180,11 @@ class Environment:
                         # Skip if terminal:
                         if self.states[grid][(row*self.dims[0]) + col].tag in self.TERMINAL:
                             self.states[grid][(row*self.dims[0]) + col].actions = {}
-               
+
+                        # If punishment and backToStart is True
+                        elif self.states[grid][(row*self.dims[0]) + col].tag == 'P' and self.backToStartOnP:
+                            self.states[grid][(row*self.dims[0]) + col].actions = {self.actions[0]:self.__getStartingState__()} # only move is back to start
+
                         # Check if cell is not marked with X:
                         elif self.states[grid][(row*self.dims[0]) + col].tag != "X":
                             actions = {key: ((grid+1)%self.dims[2], value) for key,value in pos.items()}
@@ -197,6 +204,7 @@ class Environment:
         __flattenStates__()
         __defineActions__()
         self.resetPolicy()
+        self.startingTime = self.__getStartingState__()[0]
             
     # =============== #
     #      DRAW       #
@@ -259,7 +267,7 @@ class Environment:
         # Functionalities:
         mouseHover = False           # To show actions of state you are currently hovering over
         autoAnimation = True         # Play animation
-        moves = self.__getPath__()       # Add empty move, to show last state
+        moves = self.__getMoves__()  # Add empty move, to show last state
         c = 0                        # Loop through steps
 
         heatmapAnimation = [[0 for _ in range(self.dims[0])] for _ in range(self.dims[1])]
@@ -518,7 +526,7 @@ class Environment:
                 c = (c+len(path))%len(path)
                 if c == 0 and train:
                     self.updatePolicy(1)
-                    moves = self.__getPath__()
+                    moves = self.__getMoves__()
                     path = movesToPath(moves)
                     moves.append((0,0))
                         
@@ -527,16 +535,26 @@ class Environment:
         # Close the window and quit.
         pygame.quit()
     
-    def draw3D(self) -> None:
+    def draw3D(self,path=False) -> None:
         """
-        Draws a matplotlib model in 3D
+        Draws a matplotlib model in 3D\n
+        Parameters:
+        --------
+        `path`:`bool`, whether the model should draw the path obtained from `__getPath__()`
         """
+
+        if path:
+            cells = self.__getPath__()
+            moves = [[a for a in self.__getActions__(cells[i]) if self.__doAction__(cells[i],a) == cells[i+1]][0] for i in range(len(cells)-1)]
+
         def getColors(i):
             lst = []
-            for row in self.grids[i]:
+            for ind, row in enumerate(self.grids[i]):
                 colors = []
-                for col in row:
-                    if col == 'S':
+                for jnd, col in enumerate(row):
+                    if col == 'S' and self.senseTime:
+                        colors.append(np.array([1,1,0]))
+                    elif (i,ind*self.dims[0]+jnd) == cells[0]:
                         colors.append(np.array([1,1,0]))
                     elif col == 'X':
                         colors.append(np.array([0,0,0]))
@@ -580,14 +598,44 @@ class Environment:
         for time,row in enumerate(self.states):
             for ind, state in enumerate(row):
                 for action in self.__getActions__((time,ind)):
-                    ax.quiver(ind%self.dims[0] + 0.5,time+1,ind//self.dims[0] + 0.5,
-                              action[0],1,action[1],color=[0.9,0.9,0.9])
-            
+                    if time == self.dims[2]-1: # end => start
+                        ax.quiver(ind%self.dims[0] + 0.5,time+1,ind//self.dims[0] + 0.5,
+                            action[0],0.5,action[1],color=[0.9,0.9,0.9],alpha=0.2)
+                        ax.quiver(ind%self.dims[0] + 0.5,0.5,ind//self.dims[0] + 0.5,
+                            action[0],0.5,action[1],color=[0.9,0.9,0.9],alpha=0.2)
+                    else:
+                        ax.quiver(ind%self.dims[0] + 0.5,time+1,ind//self.dims[0] + 0.5,
+                            action[0],1,action[1],color=[0.9,0.9,0.9],alpha=0.2)
+        
+        # Draw this over the other arrows
+        if path:
+            for i in range(len(moves)):
+                if cells[i][0] == self.dims[2]-1: # end => start
+                    ax.quiver(cells[i][1]%self.dims[0] + 0.5,cells[i][0]+1,cells[i][1]//self.dims[0] + 0.5,
+                        moves[i][0],0.5,moves[i][1],color=[0.9,0.9,0.0])
+                    ax.quiver(cells[i][1]%self.dims[0] + 0.5,0.5,cells[i][1]//self.dims[0] + 0.5,
+                        moves[i][0],0.5,moves[i][1],color=[0.9,0.9,0.0])
+                else:
+                    ax.quiver(cells[i][1]%self.dims[0] + 0.5,cells[i][0]+1,cells[i][1]//self.dims[0] + 0.5,
+                        moves[i][0],1,moves[i][1],color=[0.9,0.9,0.0])
+
+
         # Draw grids
         for i in range(self.dims[2]):
             C = getColors(i)
             ax.plot_surface(X, np.ones(shape=X.shape)+i, Z, facecolors=C, linewidth=0)
         
+        plt.show()
+
+    def plotPerformance(self) -> None:
+        """
+        Plots a graph of the performance of current policy
+        """
+        plt.plot(list(range(0,self.totalGenerations)),self.cumulativeRewards,label=f'{self.method}, senseTime = {self.senseTime}, backToStartOnP = {self.backToStartOnP}')
+       
+        plt.legend()
+        plt.xlabel("Episodes")
+        plt.ylabel("Sum of reward")
         plt.show()
 
     # =============== #
@@ -610,6 +658,7 @@ class Environment:
         self.policyargs = args   
         self.cumulativeRewards = []
         self.totalGenerations = 0
+        self.randomQ = randomQ
 
         if randomQ:
             # random initialization of the Q values
@@ -752,7 +801,7 @@ class Environment:
             sys.stdout.write("\r [" + "="*int(((iteration+1)/iterations) * 20) + "."*(20-(int(((iteration+1)/iterations) * 20))) +f"] SARSA ITERATION={iteration+1}     ")
             sys.stdout.flush()
             
-            cumReward = []
+            cumReward = 0
             # initialize S
             state = self.__getStartingState__()
             path = []
@@ -773,17 +822,19 @@ class Environment:
 
                 newqsa = self.__getQ__(state,action) + alpha * (reward + gamma*maxExpectedFutureReward - self.__getQ__(state,action))
                 self.__setQ__(state,action,newqsa)
-                cumReward.append(reward)
+                cumReward += reward # * (gamma**self.totalGenerations)
 
                 # Update states and actions
                 state = stateprime
                 action = actionprime
+            
+            self.totalGenerations += 1
 
             # For plotting
-            self.cumulativeRewards.append(sum(cumReward)/len(cumReward))
+            self.cumulativeRewards.append(cumReward)
+
         print()
         print(f"Performed SARSA equation, {iterations} iterations.")
-        self.totalGenerations += iterations
         self.__exportToCSV__()
     
     def __QLearning__(self, alpha, gamma, epsilon, iterations):
@@ -808,7 +859,7 @@ class Environment:
             sys.stdout.write("\r [" + "="*int(((iteration+1)/iterations) * 20) + "."*(20-(int(((iteration+1)/iterations) * 20))) +f"] QLEARNING ITERATION={iteration+1}     ")
             sys.stdout.flush()
             
-            cumReward = []
+            cumReward = 0
             # initialize S
             state = self.__getStartingState__()
             
@@ -831,15 +882,15 @@ class Environment:
                 newqsa = self.__getQ__(state,action) + alpha * (reward + gamma*maxExpectedFutureReward - self.__getQ__(state,action))
                 self.__setQ__(state,action,newqsa)
                 
-                cumReward.append(reward)
+                cumReward += reward #* (gamma**self.totalGenerations)
 
                 # Update state
                 state = stateprime
             
-            self.cumulativeRewards.append(sum(cumReward)/len(cumReward))
+            self.totalGenerations += 1
+            self.cumulativeRewards.append(cumReward)
         print()
         print(f"Performed QLearning equation, {iterations} iterations.")
-        self.totalGenerations += iterations
         self.__exportToCSV__()
 
     # =============== #
@@ -873,7 +924,7 @@ class Environment:
         """
         return self.states[s[0]][s[1]].actions[a]
 
-    def __getPath__(self):
+    def __getMoves__(self):
         curTime, curPos = self.__getStartingState__()
         path = []
         states = [(curTime, curPos)]
@@ -886,6 +937,12 @@ class Environment:
 
         #print(f"Moves found: {path}")
         return path
+    
+    def __getPath__(self):
+        marked = [(self.startingTime,self.startingState[1])]
+        for i in self.__getMoves__():
+            marked.append(self.__doAction__(marked[-1],i))
+        return marked
 
     # =============== #
     #     UTILITY     #
@@ -918,6 +975,20 @@ class Environment:
         print(f"Number of states: {self.nrStates}")
         print(f"Number of actions: {sum([len(self.__getActions__((i,j))) for i in range(self.dims[2]) for j in range(self.dims[0]*self.dims[1])])}")
         print(f"=================")
+        print(f"Using folder: {self.folder}")
+        print(f"Possible moves: {self.nrActions}")
+        print(f"Moves: {self.actions}")
+        print(f"Back to start on P state: {self.backToStartOnP}")
+        print(f"Sense of time: {self.senseTime}")
+        print(f"Starting state: {self.startingState}")
+        print(f"=================")
+        print(f"Policy method: {self.method}")
+        print(f"Learning rate alpha: {self.policyargs[0]}")
+        print(f"Discount factor gamma: {self.policyargs[1]}")
+        print(f"Epsilon: {self.policyargs[2]}")
+        print(f"Q(s,a) initialized randomly: {self.randomQ}")
+        print(f"Total generations trained: {self.totalGenerations}")
+        print(f"=================")
         if elaborate:
             print(f"States:")
             for ind, grids in enumerate(self.states):
@@ -928,86 +999,112 @@ class Environment:
             self.__exportToCSV__()
 
 
-def cumulativeAverage(lst):
-    return [np.mean(lst[:i]) for i in range(1,len(lst)+1)]
-
 def compareAlgorithms(folder,args,episodes,randomQ):
-    env = Environment(folder)
-    env.defineActions([(0,1),(1,0),(-1,0),(0,-1),(1,1),(1,-1),(-1,1),(-1,-1)])
+    env = Environment(folder,backToStartOnP=True)
+    env.defineActions([(0,1),(1,0),(-1,0),(0,-1)])
     env.setup()
 
     env.setPolicy("SARSA",args,randomQ)
     env.updatePolicy(episodes=episodes)
     SARSA = env.cumulativeRewards.copy()
+    env.draw3D(path=True)
 
-    env.resetPolicy()
-    env.setPolicy("QLearning",args,randomQ)
-    env.updatePolicy(episodes=episodes)
-    QLEARNING = env.cumulativeRewards.copy()
-
-    SARSA = cumulativeAverage(SARSA)
-    QLEARNING = cumulativeAverage(QLEARNING)
-
-    points = 100
-    plt.plot(list(range(0,episodes,episodes//points)),[SARSA[i] for i in range(0,episodes,episodes//points)],label="SARSA")
-    plt.plot(list(range(0,episodes,episodes//points)),[QLEARNING[i] for i in range(0,episodes,episodes//points)],label="QLearning")
-    plt.legend()
-    plt.xlabel("Episodes")
-    plt.ylabel("Cumulative average reward")
-    plt.show()
-
-def compareSenses(folder, mode, args, episodes, randomQ):
-    # With sense of time
-    env = Environment(folder,senseTime=True)
+    env = Environment(folder,backToStartOnP=True)
     env.defineActions([(0,1),(1,0),(-1,0),(0,-1)])
     env.setup()
 
-    env.setPolicy(mode, args, randomQ)
-    env.updatePolicy(episodes)
-    timeSense = env.cumulativeRewards.copy()
+    env.setPolicy("QLearning",args,randomQ)
+    env.updatePolicy(episodes=episodes)
+    QLEARNING = env.cumulativeRewards.copy()
+    env.draw3D(path=True)
 
-    # Without sense of time
-    envNoTime = Environment(folder, senseTime=False)
-    envNoTime.defineActions([(0,1),(1,0),(-1,0),(0,-1)])
-    envNoTime.setup()
-
-    envNoTime.setPolicy(mode, args, randomQ)
-    envNoTime.updatePolicy(episodes)
-    noTimeSense = envNoTime.cumulativeRewards.copy()
-
-    timeSense = cumulativeAverage(timeSense)
-    noTimeSense = cumulativeAverage(noTimeSense)
-
-    # Plot:
-    points = 100
-    plt.plot(list(range(0,episodes,episodes//points)),[timeSense[i] for i in range(0,episodes,episodes//points)],label='Sense of time')
-    plt.plot(list(range(0,episodes,episodes//points)),[noTimeSense[i] for i in range(0,episodes,episodes//points)],label="No sense of time")
+    plt.plot(list(range(0,episodes)),[SARSA[i] for i in range(0,episodes)],label="SARSA")
+    plt.plot(list(range(0,episodes)),[QLEARNING[i] for i in range(0,episodes)],label="QLearning")
     plt.legend()
     plt.xlabel("Episodes")
-    plt.ylabel("Cumulative average reward")
+    plt.ylabel("Sum of rewards")
+    plt.show()
+
+def compareSenses(folder, args, episodes, randomQ):
+    # With sense of time, using SARSA
+    env = Environment(folder,senseTime=True,backToStartOnP=True)
+    env.defineActions([(0,1),(1,0),(-1,0),(0,-1)])
+    env.setup()
+
+    env.setPolicy("SARSA", args, randomQ)
+    env.updatePolicy(episodes)
+    timeSenseSARSA = env.cumulativeRewards.copy()
+
+    # Without sense of time, using SARSA
+    env = Environment(folder,senseTime=False,backToStartOnP=True)
+    env.defineActions([(0,1),(1,0),(-1,0),(0,-1)])
+    env.setup()
+
+    env.setPolicy("SARSA", args, randomQ)
+    env.updatePolicy(episodes)
+    noTimeSenseSARSA = env.cumulativeRewards.copy()
+
+    # With sense of time, using SARSA
+    env = Environment(folder,senseTime=True,backToStartOnP=True)
+    env.defineActions([(0,1),(1,0),(-1,0),(0,-1)])
+    env.setup()
+
+    env.setPolicy("QLearning", args, randomQ)
+    env.updatePolicy(episodes)
+    timeSenseQLEARNING = env.cumulativeRewards.copy()
+
+    # Without sense of time, using SARSA
+    env = Environment(folder,senseTime=False,backToStartOnP=True)
+    env.defineActions([(0,1),(1,0),(-1,0),(0,-1)])
+    env.setup()
+
+    env.setPolicy("QLearning", args, randomQ)
+    env.updatePolicy(episodes)
+    noTimeSenseQLEARNING = env.cumulativeRewards.copy()
+
+    # Plot:
+    plt.plot(list(range(0,episodes)),[timeSenseSARSA[i] for i in range(0,episodes)],label='SARSA, senseTime = True')
+    plt.plot(list(range(0,episodes)),[noTimeSenseSARSA[i] for i in range(0,episodes)],label="SARSA, senseTime = False")
+    plt.plot(list(range(0,episodes)),[timeSenseQLEARNING[i] for i in range(0,episodes)],label='QLearning, senseTime = True')
+    plt.plot(list(range(0,episodes)),[noTimeSenseQLEARNING[i] for i in range(0,episodes)],label="QLearning, senseTime = False")
+    
+    plt.legend()
+    plt.xlabel("Episodes")
+    plt.ylabel("Sum of reward")
     plt.show()
 
 
 
 def main():
 
-    compareAlgorithms("gridworld",(0.9,0.9,0.1),episodes=500,randomQ=False)
-    
-    compareSenses("lvl3", "SARSA", (0.9,0.9,0.1), episodes=1000, randomQ=True)
-    return
+    #compareAlgorithms("gridworld",(0.1,1,0.1),episodes=100,randomQ=True)
+
+    #compareSenses("gridworld", (0.1,0.9,0.1), episodes=100, randomQ=False)
     # Setup the environment
 
-    env = Environment("grids",senseTime=False)
-    env.defineActions([(0,1),(1,0),(-1,0),(0,-1),(0,0)])
+    #return
+
+    ## Setup the model
+    env = Environment("grids",senseTime=True,backToStartOnP=False)
+    env.defineActions([(0,1),(1,0),(-1,0),(0,-1)])
     env.setup()
-    env.setPolicy("QLearning",(0.1,0.9,0.3),episodes=10000,randomQ=False)
-    env.updatePolicy(episodes=100000)
-    env.draw3D()
+
+    ## Set policy
+    env.setPolicy("SARSA",(0.1,1,0.1),randomQ=True)
+
+    ## Update policy with x number of episodes
+    env.updatePolicy(episodes=10000)
+
+    ## Draw method
+    env.draw3D(path=True)
+
+    ## Draw
     env.summary(exportCSV=True)
 
     env.draw(drawAnimation=True,
              drawModel=True,
              train=True)
+    #env.plotPerformance()
 
 
 if __name__ == "__main__":
