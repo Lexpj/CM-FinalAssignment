@@ -47,14 +47,8 @@ class Environment:
         self.startingTime = None
         self.senseTime = senseTime
 
-        self.Q = None
-        self.totalGenerations = None
-
-        self.method = None
-        self.policyargs = None
-        self.cumulativeRewards = None
-        self.randomQ = None
         self.rats = None
+        self.nrRats = None
 
     # =============== #
     #  HELP CLASSES   #
@@ -85,6 +79,299 @@ class Environment:
             self.value = Environment.POINTS[tag]
             self.isTerminal = tag in Environment.TERMINAL
     
+    class Rat:
+        """
+        Rat class. Holds a few variables:
+        `env`:`Environment`, the current environment
+        `method`:`str`, the method the rat is using for updating the policy, which is one of `['Bellman','SARSA','QLearning']`
+        `policyargs`:`tuple(float,float,float)`, the floats representing the learning rate, discount factor and epsilon respectively
+        `cumulativeRewards`:`list`, list of all rewards through all episodes
+        `randomQ`:`bool`, whether the Q(s,a) values are randomly initialized or not
+        `Q`:`list(list())`, the 2D array of Q(s,a) values
+        `totalGenerations`,`int`: total amount of episodes this rat has run
+        """
+        def __init__(self,env):
+            self.env = env
+            self.method = None
+            self.policyargs = None
+            self.cumulativeRewards = None
+            self.randomQ = None
+            self.Q = None
+            self.totalGenerations = None
+            
+        def importPolicy(self,policy):
+            pass
+
+        def setUpdatingPolicy(self,method: str, args: tuple, randomQ: bool) -> None:
+            """
+            Sets the policy method used to train\n
+            Parameters
+            --------
+            `method`:`str`, method in `["Bellman","SARSA","QLearning"]`
+            `args`:`tuple`, tuple in the form of `(alpha, gamma, epsilon)`
+            `randomQ`:`bool`, whether all states start on 0 or random
+            """
+            self.method = method  
+            self.policyargs = args   
+            self.cumulativeRewards = [] #set at least 1 rat
+            self.totalGenerations = 0
+            self.randomQ = randomQ
+
+            if randomQ:
+                # random initialization of the Q values
+                self.Q = [[randint(0, max(Environment.POINTS.values())) for _ in range(self.env.nrActions)] for _ in range(self.env.nrStates)]
+                
+                # However, terminal states = 0
+                for time in range(self.env.dims[2]):
+                    for state in range(self.env.dims[1]*self.env.dims[0]):
+                        if self.env.states[time][state].isTerminal:
+                            for action in range(self.env.nrActions):
+                                self.Q[time*self.env.dims[1]*self.env.dims[0] + state][action] = 0
+            else:
+                self.Q = [[0 for _ in range(self.env.nrActions)] for _ in range(self.env.nrStates)]
+
+        def resetPolicy(self) -> None:
+            """
+            Resets the policy. A new policy has to be set for training
+            using `setUpdatingPolicy(method, args, randomQ)`\n
+            Prerequisites:
+            --------
+            - `resetPolicy()` can only be run after `setup()`
+            """
+            if self.env.nrStates == None:
+                raise Exception("resetPolicy() can only be run after setup()")
+            
+            self.Q = None
+            self.totalGenerations = None
+            self.method = None
+            self.policyargs = None
+            self.cumulativeRewards = None
+            self.rats = None
+
+        def updatePolicy(self, episodes: int) -> None:
+            """
+            Master function calling policy functions\n
+            Prerequisites:
+            --------
+            - `setUpdatingPolicy(method,args,randomQ)` must be run before `updatePolicy()`\n
+            - The set `method` must be in `['Bellman','SARSA','QLearning']`\n
+            Parameters:
+            --------
+            `episodes`:`int`: the amount of iterations to train for
+            """
+            if self.method == None:
+                raise Exception("setUpdatingPolicy(method,args,randomQ) must be run before updatePolicy()")
+
+            learningRate, discountFactor, epsilon = self.policyargs
+
+            if self.method == "Bellman":
+                self.__Bellman__()
+            elif self.method == "SARSA":
+                self.__SARSA__(alpha=learningRate,
+                                gamma=discountFactor,
+                                epsilon=epsilon,
+                                iterations=episodes)
+            elif self.method == "QLearning":
+                self.__QLearning__(alpha=learningRate,
+                                gamma=discountFactor,
+                                epsilon=epsilon,
+                                iterations=episodes)
+            else:
+                raise Exception(f"Method {self.method} not found")
+
+        def __getQ__(self,s,a):
+            """
+            s is a tuple (t,s)
+            """
+            # If you are in a terminal state, return 0
+            if self.env.states[s[0]][s[1]].isTerminal:
+                return 0
+        
+            return self.Q[s[0]*self.env.dims[0]*self.env.dims[1] + s[1]][self.env.actions.index(a)]
+
+        def __setQ__(self,s,a,value):
+            self.Q[s[0]*self.env.dims[0]*self.env.dims[1] + s[1]][self.env.actions.index(a)] = value
+
+        def __optimalQ__(self, s):
+            """
+            Get the optimal action from a current state
+            """
+            return max((self.__getQ__(s,a),a) for a in self.env.__getActions__(s))[1]
+
+        def __trueMax__(self, s):
+            maxValue = max(self.__getQ__(s,a) for a in self.env.__getActions__(s))
+            filteredLst = [a for a in self.env.__getActions__(s) if self.__getQ__(s,a) == maxValue]
+            return choice(filteredLst)
+
+        def __Bellman__(self):
+
+            alpha = 0.9 # learning rate
+            gamma = 0.9 # discount factor
+            iterations = 100
+            
+            for i in range(iterations):
+
+                for time in range(self.env.dims[2]):
+                    for col in range(self.env.dims[0]*self.env.dims[1]):
+
+                        for action in self.env.__getActions__((time,col)):
+                            
+                            qa = self.__getQ__((time,col),action)
+                            reward = Environment.POINTS[self.env.states[time][col].tag]
+
+                            timeprime, colprime = self.env.__doAction__((time,col),action)
+                            maxExpectedFutureReward = max(self.__getQ__((timeprime,colprime),actionprime) for actionprime in self.env.__getActions__((timeprime,colprime)))
+
+                            # Set new Q(S,A)
+                            newqsa = qa + alpha*(reward + gamma*maxExpectedFutureReward - qa)
+                            self.__setQ__((time, col), action, newqsa)
+
+                        
+            
+            print(f"Performed Bellman equation, {iterations} iterations.")
+            self.totalGenerations += iterations
+            self.__exportToCSV__()
+
+        def __SARSA__(self, alpha, gamma, epsilon, iterations, output = False):
+
+            def pickAction(s):
+                
+                # Check if terminal:
+                if self.env.states[s[0]][s[1]].isTerminal:
+                    return None
+                
+                randomNumber = uniform(0,1)
+                
+                if randomNumber <= epsilon: # random action
+                    a = choice(list(self.env.__getActions__(s)))
+                else:                       # greedy action
+                    a = self.__trueMax__(s)
+                return a
+            
+            for iteration in range(iterations):
+                
+                if output:
+                    sys.stdout.write("\r [" + "="*int(((iteration+1)/iterations) * 20) + "."*(20-(int(((iteration+1)/iterations) * 20))) +f"] SARSA ITERATION={iteration+1}     ")
+                    sys.stdout.flush()
+                
+                cumReward = 0
+                # initialize S
+                state = self.env.__getStartingState__()
+                path = []
+                # Choose A from S using e-greedy
+                action = pickAction(state)
+                # While not terminal
+                while not self.env.states[state[0]][state[1]].isTerminal: 
+                    # Take action A, observe R, S'(=A)
+                    path.append(state)
+                    stateprime = self.env.__doAction__(state,action)
+                    reward = Environment.POINTS[self.env.states[stateprime[0]][stateprime[1]].tag]
+                    
+                    # Choose A' from S' using e-greedy
+                    actionprime = pickAction(stateprime)
+
+                    # Q(S,A) = Q(S,A) + a[R + yQ(S',A') - Q(S,A)] # NOT IN TERMINAL STATE:
+                    maxExpectedFutureReward = self.__getQ__(stateprime,actionprime)
+
+                    newqsa = self.__getQ__(state,action) + alpha * (reward + gamma*maxExpectedFutureReward - self.__getQ__(state,action))
+                    self.__setQ__(state,action,newqsa)
+                    cumReward += reward # * (gamma**self.totalGenerations)
+
+                    # Update states and actions
+                    state = stateprime
+                    action = actionprime
+                
+                self.totalGenerations += 1
+
+                # For plotting
+                self.cumulativeRewards.append(cumReward)
+
+            if output:
+                print()
+                print(f"Performed SARSA equation, {iterations} iterations.")
+            self.__exportToCSV__(output)
+        
+        def __QLearning__(self, alpha, gamma, epsilon, iterations, output = False):
+            
+            def pickAction(s):
+                
+                # Check if terminal:
+                if self.env.states[s[0]][s[1]].isTerminal:
+                    return None
+                
+                randomNumber = uniform(0,1)
+                
+                if randomNumber <= epsilon: # random action
+                    a = choice(list(self.env.__getActions__(s)))
+                else:                       # greedy action
+                    a = self.__trueMax__(s)
+
+                return a
+            
+            for iteration in range(iterations):
+                
+                if output:
+                    sys.stdout.write("\r [" + "="*int(((iteration+1)/iterations) * 20) + "."*(20-(int(((iteration+1)/iterations) * 20))) +f"] QLEARNING ITERATION={iteration+1}     ")
+                    sys.stdout.flush()
+                
+                cumReward = 0
+                # initialize S
+                state = self.env.__getStartingState__()
+                
+                # While not terminal
+                while not self.env.states[state[0]][state[1]].isTerminal: 
+                    
+                    # Choose A from S using e-greedy
+                    action = pickAction(state)
+
+                    # Take action A, observe R, S'(=A)
+                    stateprime = self.env.__doAction__(state,action)
+                    reward = Environment.POINTS[self.env.states[stateprime[0]][stateprime[1]].tag]
+
+                    # Q(S,A) = Q(S,A) + a[R + ymaxQ(S',a) - Q(S,A)] # NOT IN TERMINAL STATE:
+                    if list(self.env.__getActions__(stateprime)):
+                        maxExpectedFutureReward = max(self.__getQ__(stateprime,actionprime) for actionprime in self.env.__getActions__(stateprime))
+                    else:
+                        maxExpectedFutureReward = 0
+
+                    newqsa = self.__getQ__(state,action) + alpha * (reward + gamma*maxExpectedFutureReward - self.__getQ__(state,action))
+                    self.__setQ__(state,action,newqsa)
+                    
+                    cumReward += reward #* (gamma**self.totalGenerations)
+
+                    # Update state
+                    state = stateprime
+                
+                self.totalGenerations += 1
+                self.cumulativeRewards.append(cumReward)
+            
+            if output:
+                print()
+                print(f"Performed QLearning equation, {iterations} iterations.")
+            self.__exportToCSV__(output)
+
+        def __exportToCSV__(self,output=False):
+            # open the file in the write mode
+            with open(f'{self.method}.csv', 'w+') as f:
+
+                # create the csv writer
+                writer = csv.writer(f)
+
+                # write a row to the csv file
+                headers = ['State', 'Tag', 'Value'] + [f"Q({i})" for i in self.env.actions]
+                writer.writerow(headers)
+
+                # Write every row:
+                for time in range(self.env.dims[2]):
+                    for col,state in enumerate(self.env.states[time]):
+                        data = [(time,col), state.tag, state.value]
+                        for item in self.env.actions:
+                            data.append(self.__getQ__((time,col),item))
+                        writer.writerow(data)
+
+            if output:    
+                print(f"Saved policy of {self.totalGenerations} generations to {self.method}.csv")
+
     # =============== #
     #      SETUP      #
     # =============== #
@@ -204,7 +491,7 @@ class Environment:
         self.nrStates = self.dims[0]*self.dims[1]*self.dims[2]
         __flattenStates__()
         __defineActions__()
-        self.resetPolicy()
+        self.killRats()
         self.startingTime = self.__getStartingState__()[0]
             
     # =============== #
@@ -640,296 +927,68 @@ class Environment:
         plt.show()
 
     # =============== #
-    #     POLICY      #
+    #      RATS       #
     # =============== #
-    
-    def importPolicy(self,policy):
-        pass
-
-    def setUpdatingPolicy(self,method: str, args: tuple, randomQ: bool) -> None:
-        """
-        Sets the policy method used to train\n
-        Parameters
-        --------
-        `method`:`str`, method in `["Bellman","SARSA","QLearning"]`
-        `args`:`tuple`, tuple in the form of `(alpha, gamma, epsilon)`
-        `randomQ`:`bool`, whether all states start on 0 or random
-        """
-        self.method = method  
-        self.policyargs = args   
-        self.cumulativeRewards = [[]] #set at least 1 rat
-        self.totalGenerations = 0
-        self.randomQ = randomQ
-        self.rats = 1
-
-        if randomQ:
-            # random initialization of the Q values
-            self.Q = [[randint(0, max(Environment.POINTS.values())) for _ in range(self.nrActions)] for _ in range(self.nrStates)]
-            
-            # However, terminal states = 0
-            for time in range(self.dims[2]):
-                for state in range(self.dims[1]*self.dims[0]):
-                    if self.states[time][state].isTerminal:
-                        for action in range(self.nrActions):
-                            self.Q[time*self.dims[1]*self.dims[0] + state][action] = 0
-        else:
-            self.Q = [[0 for _ in range(self.nrActions)] for _ in range(self.nrStates)]
-        
-    def resetPolicy(self) -> None:
-        """
-        Resets the policy. A new policy has to be set for training
-        using `setUpdatingPolicy(method, args, randomQ)`\n
-        Prerequisites:
-        --------
-        - `resetPolicy()` can only be run after `setup()`
-        """
-        if self.nrStates == None:
-            raise Exception("resetPolicy() can only be run after setup()")
-        
-        self.Q = None
-        self.totalGenerations = None
-        self.method = None
-        self.policyargs = None
-        self.cumulativeRewards = None
-        self.rats = None
-
-    def updatePolicy(self, episodes: int, rats: int = 0) -> None:
-        """
-        Master function calling policy functions\n
-        Prerequisites:
-        --------
-        - `setUpdatingPolicy(method,args,randomQ)` must be run before `updatePolicy()`\n
-        - The set `method` must be in `['Bellman','SARSA','QLearning']`\n
-        Parameters:
-        --------
-        `episodes`:`int`: the amount of iterations to train for
-        `rats`:`int`: the amount of rats it will train. Each rat will train `episodes` amount of episodes. If this is set to 0, it will train on the last rat
-        """
-        if self.method == None:
-            raise Exception("setUpdatingPolicy(method,args,randomQ) must be run before updatePolicy()")
-
-        learningRate, discountFactor, epsilon = self.policyargs
-
-        if rats == 0:
-            if self.method == "Bellman":
-                self.__Bellman__()
-            elif self.method == "SARSA":
-                self.__SARSA__(alpha=learningRate,
-                                gamma=discountFactor,
-                                epsilon=epsilon,
-                                iterations=episodes)
-            elif self.method == "QLearning":
-                self.__QLearning__(alpha=learningRate,
-                                gamma=discountFactor,
-                                epsilon=epsilon,
-                                iterations=episodes)
-            else:
-                raise Exception(f"Method {self.method} not found")
-        else:
-            for rat in range(rats):
-                sys.stdout.write("\r [" + "="*int(((rat+1)/rats) * 20) + "."*(20-(int(((rat+1)/rats) * 20))) +f"] RAT={rat+1}     ")
-                sys.stdout.flush()
-                self.cumulativeRewards.append([])
-                if self.method == "Bellman":
-                    self.__Bellman__()
-                elif self.method == "SARSA":
-                    self.__SARSA__(alpha=learningRate,
-                                    gamma=discountFactor,
-                                    epsilon=epsilon,
-                                    iterations=episodes)
-                elif self.method == "QLearning":
-                    self.__QLearning__(alpha=learningRate,
-                                    gamma=discountFactor,
-                                    epsilon=epsilon,
-                                    iterations=episodes)
-                else:
-                    raise Exception(f"Method {self.method} not found")
-
-    def __getQ__(self,s,a):
-        """
-        s is a tuple (t,s)
-        """
-        # If you are in a terminal state, return 0
-        if self.states[s[0]][s[1]].isTerminal:
-            return 0
-        
-        # If move not possible:
-        #if not a in self.states[s[0]][s[1]].actions.keys():
-        #    return 0
-        
-        # New state
-        # time, action = self.states[s[0]][s[1]].actions[a]
-        # if self.states[time][action].isTerminal:
-        #     # If your move is to a terminal state, return value of the terminal state instead
-        #     return self.states[time][action].value
-
-        return self.Q[s[0]*self.dims[0]*self.dims[1] + s[1]][self.actions.index(a)]
-
-    def __setQ__(self,s,a,value):
-        self.Q[s[0]*self.dims[0]*self.dims[1] + s[1]][self.actions.index(a)] = value
-
-    def __optimalQ__(self, s):
-        """
-        Get the optimal action from a current state
-        """
-        return max((self.__getQ__(s,a),a) for a in self.__getActions__(s))[1]
-
-    def __trueMax__(self, s):
-        maxValue = max(self.__getQ__(s,a) for a in self.__getActions__(s))
-        filteredLst = [a for a in self.__getActions__(s) if self.__getQ__(s,a) == maxValue]
-        return choice(filteredLst)
-
-    def __Bellman__(self):
-
-        alpha = 0.9 # learning rate
-        gamma = 0.9 # discount factor
-        iterations = 100
-        
-        for i in range(iterations):
-
-            for time in range(self.dims[2]):
-                for col in range(self.dims[0]*self.dims[1]):
-
-                    for action in self.__getActions__((time,col)):
-                        
-                        qa = self.__getQ__((time,col),action)
-                        reward = Environment.POINTS[self.states[time][col].tag]
-
-                        timeprime, colprime = self.__doAction__((time,col),action)
-                        maxExpectedFutureReward = max(self.__getQ__((timeprime,colprime),actionprime) for actionprime in self.__getActions__((timeprime,colprime)))
-
-                        # Set new Q(S,A)
-                        newqsa = qa + alpha*(reward + gamma*maxExpectedFutureReward - qa)
-                        self.__setQ__((time, col), action, newqsa)
-
-                    
-        
-        print(f"Performed Bellman equation, {iterations} iterations.")
-        self.totalGenerations += iterations
-        self.__exportToCSV__()
-
-    def __SARSA__(self, alpha, gamma, epsilon, iterations):
-
-        def pickAction(s):
-            
-            # Check if terminal:
-            if self.states[s[0]][s[1]].isTerminal:
-                return None
-            
-            randomNumber = uniform(0,1)
-            
-            if randomNumber <= epsilon: # random action
-                a = choice(list(self.__getActions__(s)))
-            else:                       # greedy action
-                a = self.__trueMax__(s)
-            return a
-        
-        for iteration in range(iterations):
-
-            sys.stdout.write("\r [" + "="*int(((iteration+1)/iterations) * 20) + "."*(20-(int(((iteration+1)/iterations) * 20))) +f"] SARSA ITERATION={iteration+1}     ")
-            sys.stdout.flush()
-            
-            cumReward = 0
-            # initialize S
-            state = self.__getStartingState__()
-            path = []
-            # Choose A from S using e-greedy
-            action = pickAction(state)
-            # While not terminal
-            while not self.states[state[0]][state[1]].isTerminal: 
-                # Take action A, observe R, S'(=A)
-                path.append(state)
-                stateprime = self.__doAction__(state,action)
-                reward = Environment.POINTS[self.states[stateprime[0]][stateprime[1]].tag]
-                
-                # Choose A' from S' using e-greedy
-                actionprime = pickAction(stateprime)
-
-                # Q(S,A) = Q(S,A) + a[R + yQ(S',A') - Q(S,A)] # NOT IN TERMINAL STATE:
-                maxExpectedFutureReward = self.__getQ__(stateprime,actionprime)
-
-                newqsa = self.__getQ__(state,action) + alpha * (reward + gamma*maxExpectedFutureReward - self.__getQ__(state,action))
-                self.__setQ__(state,action,newqsa)
-                cumReward += reward # * (gamma**self.totalGenerations)
-
-                # Update states and actions
-                state = stateprime
-                action = actionprime
-            
-            self.totalGenerations += 1
-
-            # For plotting
-            self.cumulativeRewards[-1].append(cumReward)
-
-        print()
-        print(f"Performed SARSA equation, {iterations} iterations.")
-        self.__exportToCSV__()
-    
-    def __QLearning__(self, alpha, gamma, epsilon, iterations):
-        
-        def pickAction(s):
-            
-            # Check if terminal:
-            if self.states[s[0]][s[1]].isTerminal:
-                return None
-            
-            randomNumber = uniform(0,1)
-            
-            if randomNumber <= epsilon: # random action
-                a = choice(list(self.__getActions__(s)))
-            else:                       # greedy action
-                a = self.__trueMax__(s)
-
-            return a
-        
-        for iteration in range(iterations):
-            
-            sys.stdout.write("\r [" + "="*int(((iteration+1)/iterations) * 20) + "."*(20-(int(((iteration+1)/iterations) * 20))) +f"] QLEARNING ITERATION={iteration+1}     ")
-            sys.stdout.flush()
-            
-            cumReward = 0
-            # initialize S
-            state = self.__getStartingState__()
-            
-            # While not terminal
-            while not self.states[state[0]][state[1]].isTerminal: 
-                
-                # Choose A from S using e-greedy
-                action = pickAction(state)
-
-                # Take action A, observe R, S'(=A)
-                stateprime = self.__doAction__(state,action)
-                reward = Environment.POINTS[self.states[stateprime[0]][stateprime[1]].tag]
-
-                # Q(S,A) = Q(S,A) + a[R + ymaxQ(S',a) - Q(S,A)] # NOT IN TERMINAL STATE:
-                if list(self.__getActions__(stateprime)):
-                    maxExpectedFutureReward = max(self.__getQ__(stateprime,actionprime) for actionprime in self.__getActions__(stateprime))
-                else:
-                    maxExpectedFutureReward = 0
-
-                newqsa = self.__getQ__(state,action) + alpha * (reward + gamma*maxExpectedFutureReward - self.__getQ__(state,action))
-                self.__setQ__(state,action,newqsa)
-                
-                cumReward += reward #* (gamma**self.totalGenerations)
-
-                # Update state
-                state = stateprime
-            
-            self.totalGenerations += 1
-            self.cumulativeRewards[-1].append(cumReward)
-        print()
-        print(f"Performed QLearning equation, {iterations} iterations.")
-        self.__exportToCSV__()
 
     def getAverageCumulativeReward(self):
-        lst = [[] for i in range(max(len(x) for x in self.cumulativeRewards))]
-        for rat in self.cumulativeRewards:
-            for i in range(len(rat)):
-                lst[i].append(rat[i])
-
+        maxEpisodes = max(rat.totalGenerations for rat in self.rats)
+        lst = [[] for i in range(maxEpisodes)]
+        for rat in self.rats:
+            for i in range(rat.totalGenerations):
+                lst[i].append(rat.cumulativeRewards[i])
         return [sum(x)/len(x) for x in lst]
 
+    def killRats(self):
+        """
+        Kills all rats
+        """
+        self.rats = []
+        self.nrRats = 0
+    
+    def generateRats(self,rats: int, method: str, args: tuple, randomQ: bool):
+        """
+        Generates rats\n
+        Parameters
+        --------\n
+        `rats`:`int`: the amount of rats generated
+        `method`:`str`, the method the rat is using for updating the policy, which is one of `['Bellman','SARSA','QLearning']`
+        `args`:`tuple(float,float,float)`, the floats representing the learning rate, discount factor and epsilon respectively
+        `randomQ`:`bool`, whether the Q(s,a) values are randomly initialized or not        
+        """
+        for rat in range(rats):
+            self.rats.append(self.Rat(self))
+            self.rats[-1].setUpdatingPolicy(method, args, randomQ)
+        self.nrRats += rats
+        print()
 
+    def trainRats(self, episodes, custom = None, all = True):
+        """
+        Trains rats by updating their Q(s,a) values\n
+        Parameters
+        --------\n
+        `episodes`: `int`, the amount of episodes the rats train for
+        `custom`: `list`, a custom selection of rats (as indexes) you want to train (default = None)
+        `all`: `bool`, whether it should train all rats. Custom selections have priority
+        """
+        if custom != None:
+            for index,item in enumerate(custom):
+                # Print status
+                sys.stdout.write("\r [" + "="*int(((index+1)/len(custom)) * 20) + "."*(20-(int(((index+1)/len(custom)) * 20))) +f"] RATS={index+1}/{len(custom)}     ")
+                sys.stdout.flush()
+                
+                # Check if index in range:
+                if item < len(self.rats):
+                    self.rats[index].updatePolicy(episodes)
+                else:
+                    raise Exception(f"Can't address rat {item}, since there are only {len(self.rats)} rats.")
+        elif all:
+            for index, rat in enumerate(self.rats):
+                # Print status
+                sys.stdout.write("\r [" + "="*int(((index+1)/self.nrRats) * 20) + "."*(20-(int(((index+1)/self.nrRats) * 20))) +f"] RATS={index+1}/{self.nrRats}     ")
+                sys.stdout.flush()
+                rat.updatePolicy(episodes)
+        print()
+        
     # =============== #
     #     CONTROL     #
     # =============== #   
@@ -985,27 +1044,6 @@ class Environment:
     #     UTILITY     #
     # =============== #    
 
-    def __exportToCSV__(self):
-        # open the file in the write mode
-        with open(f'{self.method}.csv', 'w+') as f:
-
-            # create the csv writer
-            writer = csv.writer(f)
-
-            # write a row to the csv file
-            headers = ['State', 'Tag', 'Value'] + [f"Q({i})" for i in self.actions]
-            writer.writerow(headers)
-
-            # Write every row:
-            for time in range(self.dims[2]):
-                for col,state in enumerate(self.states[time]):
-                    data = [(time,col), state.tag, state.value]
-                    for item in self.actions:
-                        data.append(self.__getQ__((time,col),item))
-                    writer.writerow(data)
-            
-        print(f"Saved policy of {self.totalGenerations} generations to {self.method}.csv")
-
     def summary(self,exportCSV=False,elaborate=False):
         print(f"==== SUMMARY ====")
         print(f"Dimensions: {self.dims}")
@@ -1036,28 +1074,31 @@ class Environment:
             self.__exportToCSV__()
 
 
-def compareAlgorithms(folder,args,episodes,randomQ):
+def compareAlgorithms(folder,args,rats,episodes,randomQ):
     env = Environment(folder,backToStartOnP=True)
     env.defineActions([(0,1),(1,0),(-1,0),(0,-1)])
     env.setup()
 
-    env.setUpdatingPolicy("SARSA",args,randomQ)
-    env.updatePolicy(episodes=episodes,rats=100)
+    env.generateRats(rats, method="SARSA", args=args, randomQ=randomQ)
+    env.trainRats(episodes=episodes,all=True)
+
     SARSA = env.getAverageCumulativeReward()
-    env.draw3D(path=True)
+
+    #env.draw3D(path=True)
 
     env = Environment(folder,backToStartOnP=True)
     env.defineActions([(0,1),(1,0),(-1,0),(0,-1)])
     env.setup()
 
-    env.setUpdatingPolicy("QLearning",args,randomQ)
-    env.updatePolicy(episodes=episodes,rats=100)
+    env.generateRats(rats, method="QLearning", args=args, randomQ=randomQ)
+    env.trainRats(episodes=episodes,all=True)
     QLEARNING = env.getAverageCumulativeReward()
     
     #env.draw3D(path=True)
     #print(SARSA,QLEARNING)
     
     plt.ylim([min(Environment.POINTS.values()), max(Environment.POINTS.values())])
+    plt.xlim(0,len(SARSA))
     plt.plot(list(range(0,episodes)),[SARSA[i] for i in range(0,episodes)],label="SARSA")
     plt.plot(list(range(0,episodes)),[QLEARNING[i] for i in range(0,episodes)],label="QLearning")
     plt.legend()
@@ -1117,7 +1158,7 @@ def compareSenses(folder, args, episodes, randomQ):
 
 def main():
 
-    compareAlgorithms("gridworld",(0.1,1,0.1),episodes=100,randomQ=True)
+    compareAlgorithms("gridworld",(0.1,0.5,0.1),rats=200,episodes=500,randomQ=True)
 
     #compareSenses("gridworld", (0.1,0.9,0.1), episodes=100, randomQ=False)
     # Setup the environment
