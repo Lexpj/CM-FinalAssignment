@@ -54,9 +54,10 @@ class Environment:
         self.policyargs = None
         self.cumulativeRewards = None
         self.randomQ = None
+        self.rats = None
 
     # =============== #
-    #      STATE      #
+    #  HELP CLASSES   #
     # =============== #
 
     class State:
@@ -83,7 +84,7 @@ class Environment:
             self.tag = tag
             self.value = Environment.POINTS[tag]
             self.isTerminal = tag in Environment.TERMINAL
-
+    
     # =============== #
     #      SETUP      #
     # =============== #
@@ -113,7 +114,7 @@ class Environment:
         """
         Setup of the environment. \n
         This reads the environment folder, sets up all states and connects them via actions.\n
-        Furthermore, the policy is reset. This has to be independently defined later by `setPolicy(method, args, randomQ)`
+        Furthermore, the policy is reset. This has to be independently defined later by `setUpdatingPolicy(method, args, randomQ)`
         Prerequisites
         --------
         - The `actions` are set using `defineActions(actions)`\n
@@ -554,7 +555,7 @@ class Environment:
                 for jnd, col in enumerate(row):
                     if col == 'S' and self.senseTime:
                         colors.append(np.array([1,1,0]))
-                    elif (i,ind*self.dims[0]+jnd) == cells[0]:
+                    elif path and (i,ind*self.dims[0]+jnd) == cells[0]:
                         colors.append(np.array([1,1,0]))
                     elif col == 'X':
                         colors.append(np.array([0,0,0]))
@@ -645,7 +646,7 @@ class Environment:
     def importPolicy(self,policy):
         pass
 
-    def setPolicy(self,method: str, args: tuple, randomQ: bool) -> None:
+    def setUpdatingPolicy(self,method: str, args: tuple, randomQ: bool) -> None:
         """
         Sets the policy method used to train\n
         Parameters
@@ -656,13 +657,14 @@ class Environment:
         """
         self.method = method  
         self.policyargs = args   
-        self.cumulativeRewards = []
+        self.cumulativeRewards = [[]] #set at least 1 rat
         self.totalGenerations = 0
         self.randomQ = randomQ
+        self.rats = 1
 
         if randomQ:
             # random initialization of the Q values
-            self.Q = [[randint(min(Environment.POINTS.values()), max(Environment.POINTS.values())) for _ in range(self.nrActions)] for _ in range(self.nrStates)]
+            self.Q = [[randint(0, max(Environment.POINTS.values())) for _ in range(self.nrActions)] for _ in range(self.nrStates)]
             
             # However, terminal states = 0
             for time in range(self.dims[2]):
@@ -676,7 +678,7 @@ class Environment:
     def resetPolicy(self) -> None:
         """
         Resets the policy. A new policy has to be set for training
-        using `setPolicy(method, args, randomQ)`\n
+        using `setUpdatingPolicy(method, args, randomQ)`\n
         Prerequisites:
         --------
         - `resetPolicy()` can only be run after `setup()`
@@ -689,37 +691,59 @@ class Environment:
         self.method = None
         self.policyargs = None
         self.cumulativeRewards = None
+        self.rats = None
 
-    def updatePolicy(self, episodes: int) -> None:
+    def updatePolicy(self, episodes: int, rats: int = 0) -> None:
         """
         Master function calling policy functions\n
         Prerequisites:
         --------
-        - `setPolicy(method,args,randomQ)` must be run before `updatePolicy()`\n
+        - `setUpdatingPolicy(method,args,randomQ)` must be run before `updatePolicy()`\n
         - The set `method` must be in `['Bellman','SARSA','QLearning']`\n
         Parameters:
         --------
         `episodes`:`int`: the amount of iterations to train for
+        `rats`:`int`: the amount of rats it will train. Each rat will train `episodes` amount of episodes. If this is set to 0, it will train on the last rat
         """
         if self.method == None:
-            raise Exception("setPolicy(method,args,randomQ) must be run before updatePolicy()")
+            raise Exception("setUpdatingPolicy(method,args,randomQ) must be run before updatePolicy()")
 
         learningRate, discountFactor, epsilon = self.policyargs
 
-        if self.method == "Bellman":
-            self.__Bellman__()
-        elif self.method == "SARSA":
-            self.__SARSA__(alpha=learningRate,
-                            gamma=discountFactor,
-                            epsilon=epsilon,
-                            iterations=episodes)
-        elif self.method == "QLearning":
-            self.__QLearning__(alpha=learningRate,
-                            gamma=discountFactor,
-                            epsilon=epsilon,
-                            iterations=episodes)
+        if rats == 0:
+            if self.method == "Bellman":
+                self.__Bellman__()
+            elif self.method == "SARSA":
+                self.__SARSA__(alpha=learningRate,
+                                gamma=discountFactor,
+                                epsilon=epsilon,
+                                iterations=episodes)
+            elif self.method == "QLearning":
+                self.__QLearning__(alpha=learningRate,
+                                gamma=discountFactor,
+                                epsilon=epsilon,
+                                iterations=episodes)
+            else:
+                raise Exception(f"Method {self.method} not found")
         else:
-            raise Exception(f"Method {self.method} not found")
+            for rat in range(rats):
+                sys.stdout.write("\r [" + "="*int(((rat+1)/rats) * 20) + "."*(20-(int(((rat+1)/rats) * 20))) +f"] RAT={rat+1}     ")
+                sys.stdout.flush()
+                self.cumulativeRewards.append([])
+                if self.method == "Bellman":
+                    self.__Bellman__()
+                elif self.method == "SARSA":
+                    self.__SARSA__(alpha=learningRate,
+                                    gamma=discountFactor,
+                                    epsilon=epsilon,
+                                    iterations=episodes)
+                elif self.method == "QLearning":
+                    self.__QLearning__(alpha=learningRate,
+                                    gamma=discountFactor,
+                                    epsilon=epsilon,
+                                    iterations=episodes)
+                else:
+                    raise Exception(f"Method {self.method} not found")
 
     def __getQ__(self,s,a):
         """
@@ -749,6 +773,11 @@ class Environment:
         Get the optimal action from a current state
         """
         return max((self.__getQ__(s,a),a) for a in self.__getActions__(s))[1]
+
+    def __trueMax__(self, s):
+        maxValue = max(self.__getQ__(s,a) for a in self.__getActions__(s))
+        filteredLst = [a for a in self.__getActions__(s) if self.__getQ__(s,a) == maxValue]
+        return choice(filteredLst)
 
     def __Bellman__(self):
 
@@ -792,8 +821,7 @@ class Environment:
             if randomNumber <= epsilon: # random action
                 a = choice(list(self.__getActions__(s)))
             else:                       # greedy action
-                a = max((self.__getQ__(s,a),a) for a in self.__getActions__(s))[1]
-
+                a = self.__trueMax__(s)
             return a
         
         for iteration in range(iterations):
@@ -831,7 +859,7 @@ class Environment:
             self.totalGenerations += 1
 
             # For plotting
-            self.cumulativeRewards.append(cumReward)
+            self.cumulativeRewards[-1].append(cumReward)
 
         print()
         print(f"Performed SARSA equation, {iterations} iterations.")
@@ -850,7 +878,7 @@ class Environment:
             if randomNumber <= epsilon: # random action
                 a = choice(list(self.__getActions__(s)))
             else:                       # greedy action
-                a = max((self.__getQ__(s,a),a) for a in self.__getActions__(s))[1]
+                a = self.__trueMax__(s)
 
             return a
         
@@ -888,10 +916,19 @@ class Environment:
                 state = stateprime
             
             self.totalGenerations += 1
-            self.cumulativeRewards.append(cumReward)
+            self.cumulativeRewards[-1].append(cumReward)
         print()
         print(f"Performed QLearning equation, {iterations} iterations.")
         self.__exportToCSV__()
+
+    def getAverageCumulativeReward(self):
+        lst = [[] for i in range(max(len(x) for x in self.cumulativeRewards))]
+        for rat in self.cumulativeRewards:
+            for i in range(len(rat)):
+                lst[i].append(rat[i])
+
+        return [sum(x)/len(x) for x in lst]
+
 
     # =============== #
     #     CONTROL     #
@@ -1004,20 +1041,23 @@ def compareAlgorithms(folder,args,episodes,randomQ):
     env.defineActions([(0,1),(1,0),(-1,0),(0,-1)])
     env.setup()
 
-    env.setPolicy("SARSA",args,randomQ)
-    env.updatePolicy(episodes=episodes)
-    SARSA = env.cumulativeRewards.copy()
+    env.setUpdatingPolicy("SARSA",args,randomQ)
+    env.updatePolicy(episodes=episodes,rats=100)
+    SARSA = env.getAverageCumulativeReward()
     env.draw3D(path=True)
 
     env = Environment(folder,backToStartOnP=True)
     env.defineActions([(0,1),(1,0),(-1,0),(0,-1)])
     env.setup()
 
-    env.setPolicy("QLearning",args,randomQ)
-    env.updatePolicy(episodes=episodes)
-    QLEARNING = env.cumulativeRewards.copy()
-    env.draw3D(path=True)
-
+    env.setUpdatingPolicy("QLearning",args,randomQ)
+    env.updatePolicy(episodes=episodes,rats=100)
+    QLEARNING = env.getAverageCumulativeReward()
+    
+    #env.draw3D(path=True)
+    #print(SARSA,QLEARNING)
+    
+    plt.ylim([min(Environment.POINTS.values()), max(Environment.POINTS.values())])
     plt.plot(list(range(0,episodes)),[SARSA[i] for i in range(0,episodes)],label="SARSA")
     plt.plot(list(range(0,episodes)),[QLEARNING[i] for i in range(0,episodes)],label="QLearning")
     plt.legend()
@@ -1031,7 +1071,7 @@ def compareSenses(folder, args, episodes, randomQ):
     env.defineActions([(0,1),(1,0),(-1,0),(0,-1)])
     env.setup()
 
-    env.setPolicy("SARSA", args, randomQ)
+    env.setUpdatingPolicy("SARSA", args, randomQ)
     env.updatePolicy(episodes)
     timeSenseSARSA = env.cumulativeRewards.copy()
 
@@ -1040,7 +1080,7 @@ def compareSenses(folder, args, episodes, randomQ):
     env.defineActions([(0,1),(1,0),(-1,0),(0,-1)])
     env.setup()
 
-    env.setPolicy("SARSA", args, randomQ)
+    env.setUpdatingPolicy("SARSA", args, randomQ)
     env.updatePolicy(episodes)
     noTimeSenseSARSA = env.cumulativeRewards.copy()
 
@@ -1049,7 +1089,7 @@ def compareSenses(folder, args, episodes, randomQ):
     env.defineActions([(0,1),(1,0),(-1,0),(0,-1)])
     env.setup()
 
-    env.setPolicy("QLearning", args, randomQ)
+    env.setUpdatingPolicy("QLearning", args, randomQ)
     env.updatePolicy(episodes)
     timeSenseQLEARNING = env.cumulativeRewards.copy()
 
@@ -1058,7 +1098,7 @@ def compareSenses(folder, args, episodes, randomQ):
     env.defineActions([(0,1),(1,0),(-1,0),(0,-1)])
     env.setup()
 
-    env.setPolicy("QLearning", args, randomQ)
+    env.setUpdatingPolicy("QLearning", args, randomQ)
     env.updatePolicy(episodes)
     noTimeSenseQLEARNING = env.cumulativeRewards.copy()
 
@@ -1077,26 +1117,26 @@ def compareSenses(folder, args, episodes, randomQ):
 
 def main():
 
-    #compareAlgorithms("gridworld",(0.1,1,0.1),episodes=100,randomQ=True)
+    compareAlgorithms("gridworld",(0.1,1,0.1),episodes=100,randomQ=True)
 
     #compareSenses("gridworld", (0.1,0.9,0.1), episodes=100, randomQ=False)
     # Setup the environment
 
-    #return
+    return
 
     ## Setup the model
-    env = Environment("grids",senseTime=True,backToStartOnP=False)
+    env = Environment("lvl3",senseTime=True,backToStartOnP=False)
     env.defineActions([(0,1),(1,0),(-1,0),(0,-1)])
     env.setup()
 
     ## Set policy
-    env.setPolicy("SARSA",(0.1,1,0.1),randomQ=True)
+    env.setUpdatingPolicy("SARSA",(0.1,0,0.1),randomQ=True)
 
     ## Update policy with x number of episodes
-    env.updatePolicy(episodes=10000)
+    env.updatePolicy(episodes=500)
 
     ## Draw method
-    env.draw3D(path=True)
+    env.draw3D(path=False)
 
     ## Draw
     env.summary(exportCSV=True)
@@ -1109,3 +1149,10 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# Notes van de meeting:
+# <check> backToStart klopt dat?
+# score is gemiddelde van multiple rats 
+# <check> trueMax instead of max
+# no knowledge of time means no time to know
