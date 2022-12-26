@@ -9,20 +9,15 @@ from random import uniform, choice, randint
 import csv
 import matplotlib.pyplot as plt
 import sys
+from time import perf_counter, strftime, gmtime
 
 class Environment:
 
-    def __init__(self,folder: str = None, senseTime: bool = True,
-                backToStartOnP: bool = False) -> None:
+    def __init__(self,folder: str = None, backToStartOnP: bool = False) -> None:
         """
         Parameters
         ----------
         `folder`:`str`, the environment folder that is used
-        `senseTime`:`bool`, whether there is a sense of time in the environment
-        If this is the case, the `startingState` is always the unique state `S` found in
-        the environment at a specific time. This comes down to a static `startingState = (time, pos)` 
-        If this is not the case, the `startingState`'s position is the same, but time may differ.
-        This comes down to `startingState = (t, pos)` for random `t` in `[0,dims[2]]`
         `backToStartOnP`:`bool`, episode doesn't end on a P tagged state, but sends you back to the start.
         This comes with the prerequisite that P is not in `Environment.TERMINAL`.
         """
@@ -45,7 +40,6 @@ class Environment:
         self.backToStartOnP = backToStartOnP
         self.startingState = None
         self.startingTime = None
-        self.senseTime = senseTime
 
         self.rats = None
         self.nrRats = None
@@ -89,6 +83,11 @@ class Environment:
         `randomQ`:`bool`, whether the Q(s,a) values are randomly initialized or not
         `Q`:`list(list())`, the 2D array of Q(s,a) values
         `totalGenerations`,`int`: total amount of episodes this rat has run
+        `senseTime`:`bool`, whether there is a sense of time in the environment
+        If this is the case, the `startingState` is always the unique state `S` found in
+        the environment at a specific time. This comes down to a static `startingState = (time, pos)` 
+        If this is not the case, the `startingState`'s position is the same, but time may differ.
+        This comes down to `startingState = (t, pos)` for random `t` in `[0,dims[2]]`
         """
         def __init__(self,env):
             self.env = env
@@ -98,11 +97,16 @@ class Environment:
             self.randomQ = None
             self.Q = None
             self.totalGenerations = None
-            
+            self.senseTime = None
+
+        # =============== #
+        #     UPDATE      #
+        # =============== # 
+
         def importPolicy(self,policy):
             pass
 
-        def setUpdatingPolicy(self,method: str, args: tuple, randomQ: bool) -> None:
+        def setUpdatingPolicy(self,method: str, args: tuple, randomQ: bool, senseTime: bool = True) -> None:
             """
             Sets the policy method used to train\n
             Parameters
@@ -110,12 +114,14 @@ class Environment:
             `method`:`str`, method in `["Bellman","SARSA","QLearning"]`
             `args`:`tuple`, tuple in the form of `(alpha, gamma, epsilon)`
             `randomQ`:`bool`, whether all states start on 0 or random
+            `senseTime`:`bool`, whether the rat has a sense of time (default = True)
             """
             self.method = method  
             self.policyargs = args   
             self.cumulativeRewards = [] #set at least 1 rat
             self.totalGenerations = 0
             self.randomQ = randomQ
+            self.senseTime = senseTime
 
             if randomQ:
                 # random initialization of the Q values
@@ -154,7 +160,7 @@ class Environment:
             Prerequisites:
             --------
             - `setUpdatingPolicy(method,args,randomQ)` must be run before `updatePolicy()`\n
-            - The set `method` must be in `['Bellman','SARSA','QLearning']`\n
+            - The set `method` must be in `['SARSA','QLearning']`\n
             Parameters:
             --------
             `episodes`:`int`: the amount of iterations to train for
@@ -164,9 +170,7 @@ class Environment:
 
             learningRate, discountFactor, epsilon = self.policyargs
 
-            if self.method == "Bellman":
-                self.__Bellman__()
-            elif self.method == "SARSA":
+            if self.method == "SARSA":
                 self.__SARSA__(alpha=learningRate,
                                 gamma=discountFactor,
                                 epsilon=epsilon,
@@ -196,41 +200,12 @@ class Environment:
             """
             Get the optimal action from a current state
             """
-            return max((self.__getQ__(s,a),a) for a in self.env.__getActions__(s))[1]
+            return max((self.__getQ__(s,a),a) for a in self.__getActions__(s))[1]
 
         def __trueMax__(self, s):
-            maxValue = max(self.__getQ__(s,a) for a in self.env.__getActions__(s))
-            filteredLst = [a for a in self.env.__getActions__(s) if self.__getQ__(s,a) == maxValue]
+            maxValue = max(self.__getQ__(s,a) for a in self.__getActions__(s))
+            filteredLst = [a for a in self.__getActions__(s) if self.__getQ__(s,a) == maxValue]
             return choice(filteredLst)
-
-        def __Bellman__(self):
-
-            alpha = 0.9 # learning rate
-            gamma = 0.9 # discount factor
-            iterations = 100
-            
-            for i in range(iterations):
-
-                for time in range(self.env.dims[2]):
-                    for col in range(self.env.dims[0]*self.env.dims[1]):
-
-                        for action in self.env.__getActions__((time,col)):
-                            
-                            qa = self.__getQ__((time,col),action)
-                            reward = Environment.POINTS[self.env.states[time][col].tag]
-
-                            timeprime, colprime = self.env.__doAction__((time,col),action)
-                            maxExpectedFutureReward = max(self.__getQ__((timeprime,colprime),actionprime) for actionprime in self.env.__getActions__((timeprime,colprime)))
-
-                            # Set new Q(S,A)
-                            newqsa = qa + alpha*(reward + gamma*maxExpectedFutureReward - qa)
-                            self.__setQ__((time, col), action, newqsa)
-
-                        
-            
-            print(f"Performed Bellman equation, {iterations} iterations.")
-            self.totalGenerations += iterations
-            self.__exportToCSV__()
 
         def __SARSA__(self, alpha, gamma, epsilon, iterations, output = False):
 
@@ -243,7 +218,7 @@ class Environment:
                 randomNumber = uniform(0,1)
                 
                 if randomNumber <= epsilon: # random action
-                    a = choice(list(self.env.__getActions__(s)))
+                    a = choice(list(self.__getActions__(s)))
                 else:                       # greedy action
                     a = self.__trueMax__(s)
                 return a
@@ -264,7 +239,7 @@ class Environment:
                 while not self.env.states[state[0]][state[1]].isTerminal: 
                     # Take action A, observe R, S'(=A)
                     path.append(state)
-                    stateprime = self.env.__doAction__(state,action)
+                    stateprime = self.__doAction__(state,action)
                     reward = Environment.POINTS[self.env.states[stateprime[0]][stateprime[1]].tag]
                     
                     # Choose A' from S' using e-greedy
@@ -274,7 +249,14 @@ class Environment:
                     maxExpectedFutureReward = self.__getQ__(stateprime,actionprime)
 
                     newqsa = self.__getQ__(state,action) + alpha * (reward + gamma*maxExpectedFutureReward - self.__getQ__(state,action))
-                    self.__setQ__(state,action,newqsa)
+                    
+                    # If sense of time, just set the Q(s,a) for current t
+                    if self.senseTime:
+                        self.__setQ__(state,action,newqsa)
+                    else: # else it should set Q(s,a) for every t 
+                        for _ in range(self.env.dims[2]):
+                            self.__setQ__((_,state[1]),action,newqsa)
+
                     cumReward += reward # * (gamma**self.totalGenerations)
 
                     # Update states and actions
@@ -289,7 +271,6 @@ class Environment:
             if output:
                 print()
                 print(f"Performed SARSA equation, {iterations} iterations.")
-            self.__exportToCSV__(output)
         
         def __QLearning__(self, alpha, gamma, epsilon, iterations, output = False):
             
@@ -302,7 +283,7 @@ class Environment:
                 randomNumber = uniform(0,1)
                 
                 if randomNumber <= epsilon: # random action
-                    a = choice(list(self.env.__getActions__(s)))
+                    a = choice(list(self.__getActions__(s)))
                 else:                       # greedy action
                     a = self.__trueMax__(s)
 
@@ -325,17 +306,23 @@ class Environment:
                     action = pickAction(state)
 
                     # Take action A, observe R, S'(=A)
-                    stateprime = self.env.__doAction__(state,action)
+                    stateprime = self.__doAction__(state,action)
                     reward = Environment.POINTS[self.env.states[stateprime[0]][stateprime[1]].tag]
 
                     # Q(S,A) = Q(S,A) + a[R + ymaxQ(S',a) - Q(S,A)] # NOT IN TERMINAL STATE:
-                    if list(self.env.__getActions__(stateprime)):
-                        maxExpectedFutureReward = max(self.__getQ__(stateprime,actionprime) for actionprime in self.env.__getActions__(stateprime))
+                    if list(self.__getActions__(stateprime)):
+                        maxExpectedFutureReward = max(self.__getQ__(stateprime,actionprime) for actionprime in self.__getActions__(stateprime))
                     else:
                         maxExpectedFutureReward = 0
 
                     newqsa = self.__getQ__(state,action) + alpha * (reward + gamma*maxExpectedFutureReward - self.__getQ__(state,action))
-                    self.__setQ__(state,action,newqsa)
+                    
+                    # If sense of time, just set the Q(s,a) for current t
+                    if self.senseTime:
+                        self.__setQ__(state,action,newqsa)
+                    else: # else it should set Q(s,a) for every t 
+                        for _ in range(self.env.dims[2]):
+                            self.__setQ__((_,state[1]),action,newqsa)
                     
                     cumReward += reward #* (gamma**self.totalGenerations)
 
@@ -348,7 +335,6 @@ class Environment:
             if output:
                 print()
                 print(f"Performed QLearning equation, {iterations} iterations.")
-            self.__exportToCSV__(output)
 
         def __exportToCSV__(self,output=False):
             # open the file in the write mode
@@ -371,6 +357,62 @@ class Environment:
 
             if output:    
                 print(f"Saved policy of {self.totalGenerations} generations to {self.method}.csv")
+
+        # =============== #
+        #     CONTROL     #
+        # =============== #   
+
+        def __getActions__(self,s):
+            """
+            get actions for a specific time and a specific state
+            param t: 0 <= t < self.dims[2]
+            param s: 0 <= s < self.dims[0]*self.dims[1]
+            return: actions subset of self.actions
+            """
+            return self.env.states[s[0]][s[1]].actions.keys()
+
+        def __doAction__(self,s,a):
+            """
+            returns the next state
+            param s: current state
+            param a: action
+            """
+            return self.env.states[s[0]][s[1]].actions[a]
+        
+        def __getPath__(self) -> list:
+            """
+            Returns a path in the form of [state, state, state ...]
+            """
+            marked = [self.env.__getStartingState__()]
+
+            while not self.env.states[marked[-1][0]][marked[-1][1]].isTerminal:
+                
+                # pick e-greedy action 
+                randomNumber = uniform(0,1)
+                if randomNumber <= self.policyargs[2]: # random action
+                    a = choice(list(self.__getActions__(marked[-1])))
+                else:                       # greedy action
+                    a = self.__trueMax__(marked[-1])
+
+                newState = self.__doAction__(marked[-1],a)
+                marked.append(newState)
+            return marked
+
+        # =============== #
+        #     UTILITY     #
+        # =============== #
+
+        def summary(self):
+            print(f"==== SUMMARY ====")
+            print(f"Method: {self.method}")
+            print(f"Learning rate: {self.policyargs[0]}")
+            print(f"Discount factor: {self.policyargs[1]}")
+            print(f"Epsilon: {self.policyargs[2]}")
+            print(f"Total episodes: {self.totalGenerations}")
+            print(f"=================")
+            print(f"Random Q: {self.randomQ}")
+            print(f"Sense of time: {self.senseTime}")
+            print(f"=================")
 
     # =============== #
     #      SETUP      #
@@ -492,11 +534,43 @@ class Environment:
         __flattenStates__()
         __defineActions__()
         self.killRats()
+        self.rats = []
+        self.nrRats = 0
         self.startingTime = self.__getStartingState__()[0]
             
     # =============== #
     #      DRAW       #
     # =============== #
+
+    def plotPerformance(self, selections = []) -> None:
+        """
+        Takes in a list of selections of the form (custom, label) of rats, yielded by __customSelection__, and compares
+        their ACR's per episode in a plot
+
+        Parameters:
+        --------
+        `selections`:`list`, list of tuples of the form (custom selection, label)\n
+        Example:
+        --------
+        The following selections could draw 2 selections, the rats that used SARSA as update policy
+        and the rats that used QLearning as update policy.\n
+        `selections = [({"method":"SARSA"},"SARSA"), ({"method":"QLearning"},"QLearning")]`
+        """
+
+        maxlen = 0
+        # Get and plot all ACR's        
+        for item in selections:
+            ACR = self.getACR(item[0])
+            maxlen = max(maxlen, len(ACR)) # for xlim plot
+            plt.plot(list(range(0,len(ACR))),ACR,label=item[1])
+
+        # Setup up plot
+        plt.ylim([min(Environment.POINTS.values()), max(Environment.POINTS.values())])
+        plt.xlim(0,maxlen)
+        plt.legend()
+        plt.xlabel("Episodes")
+        plt.ylabel("Sum of rewards")
+        plt.show()
 
     def printEnvironment(self) -> None:
         """
@@ -517,7 +591,7 @@ class Environment:
             for ind, state in enumerate(row):
                 print((time,ind),self.__getActions__((time,ind)))
     
-    def draw(self,drawAnimation: bool = True, drawModel: bool = True, train: bool = False) -> None:
+    def draw(self, rat: Rat, drawAnimation: bool = True, drawModel: bool = True) -> None:
         """
         Draws the state-transition diagram
         Could be gigantic, beware!\n
@@ -530,9 +604,8 @@ class Environment:
         This animation shows the path the agent takes with the current policy. 
         `drawModel`:`bool`, whether the model is drawn. The model draws the transition
         diagram between states.
-        `train`:`bool`, whether the policy is updated throughout the animation. Prerequisite is
-        that a policy is set using `setPolicy(mode, args, randomQ)`. The policy is updated with `episodes=1`.  
         """
+
         ##### PYGAME INIT ######
         BLACK = (0, 0, 0)
         W,M = 30,10
@@ -555,20 +628,18 @@ class Environment:
         # Functionalities:
         mouseHover = False           # To show actions of state you are currently hovering over
         autoAnimation = True         # Play animation
-        moves = self.__getMoves__()  # Add empty move, to show last state
+        path = rat.__getPath__()    # Add empty move, to show last state
         c = 0                        # Loop through steps
 
         heatmapAnimation = [[0 for _ in range(self.dims[0])] for _ in range(self.dims[1])]
         heatmap = [[0 for _ in range(self.dims[0]*self.dims[1])] for _ in range(self.dims[2])]
 
-        def movesToPath(m):
+        def pathToMoves(p):
             # Convert moves into path
-            if m != None:
-                marked = [(self.startingTime,self.startingState[1])]
-                for i in m:
-                    marked.append(self.__doAction__(marked[-1],i))
-            else:
-                marked = []
+            marked = []
+            if p != None:
+                for i in range(len(p)-1):
+                    marked.append((-(p[i+1][0]%self.dims[0]-p[i][0]%self.dims[0]),-(p[i+1][1]//self.dims[0]-p[i][1]//self.dims[0])))
             return marked
         
         def drawStatesAnimation(grid,state):
@@ -613,7 +684,7 @@ class Environment:
             for i in range(self.dims[2]):
                 for j in range(self.dims[0]*self.dims[1]):
                     # Draw state
-                    if self.states[i][j].tag == "S":
+                    if path[0] == (i,j):
                         pygame.draw.rect(screen, (255,255,0), [j*(W+M)+M,i*(W+M)+M,W,W]) 
                     elif self.states[i][j].tag == "P":
                         pygame.draw.rect(screen, (255,0,0), [j*(W+M)+M,i*(W+M)+M,W,W]) 
@@ -755,7 +826,7 @@ class Environment:
 
                 pygame.draw.polygon(surface, color, body_verts)
 
-        path = movesToPath(moves)
+        moves = pathToMoves(path)
         moves.append((0,0))
 
         # -------- Main Program Loop -----------
@@ -812,10 +883,9 @@ class Environment:
             # reset animation if path exists
             if path != None:
                 c = (c+len(path))%len(path)
-                if c == 0 and train:
-                    self.updatePolicy(1)
-                    moves = self.__getMoves__()
-                    path = movesToPath(moves)
+                if c == 0:
+                    path = rat.__getPath__()
+                    moves = pathToMoves(path)
                     moves.append((0,0))
                         
 
@@ -823,7 +893,7 @@ class Environment:
         # Close the window and quit.
         pygame.quit()
     
-    def draw3D(self,path=False) -> None:
+    def draw3D(self,rat=None) -> None:
         """
         Draws a matplotlib model in 3D\n
         Parameters:
@@ -831,18 +901,18 @@ class Environment:
         `path`:`bool`, whether the model should draw the path obtained from `__getPath__()`
         """
 
-        if path:
-            cells = self.__getPath__()
-            moves = [[a for a in self.__getActions__(cells[i]) if self.__doAction__(cells[i],a) == cells[i+1]][0] for i in range(len(cells)-1)]
+        if rat != None:
+            cells = rat.__getPath__()
+            moves = [[a for a in rat.__getActions__(cells[i]) if rat.__doAction__(cells[i],a) == cells[i+1]][0] for i in range(len(cells)-1)]
 
         def getColors(i):
             lst = []
             for ind, row in enumerate(self.grids[i]):
                 colors = []
                 for jnd, col in enumerate(row):
-                    if col == 'S' and self.senseTime:
+                    if rat == None and col == 'S':
                         colors.append(np.array([1,1,0]))
-                    elif path and (i,ind*self.dims[0]+jnd) == cells[0]:
+                    elif rat != None and (i,ind*self.dims[0]+jnd) == cells[0]:
                         colors.append(np.array([1,1,0]))
                     elif col == 'X':
                         colors.append(np.array([0,0,0]))
@@ -883,20 +953,20 @@ class Environment:
         ax.zaxis.pane.fill = False
 
         # Draw arrows
-        for time,row in enumerate(self.states):
-            for ind, state in enumerate(row):
-                for action in self.__getActions__((time,ind)):
+        for time in range(self.dims[2]):
+            for state in range(self.dims[1]*self.dims[0]):
+                for action in self.states[time][state].actions:
                     if time == self.dims[2]-1: # end => start
-                        ax.quiver(ind%self.dims[0] + 0.5,time+1,ind//self.dims[0] + 0.5,
+                        ax.quiver(state%self.dims[0] + 0.5,time+1,state//self.dims[0] + 0.5,
                             action[0],0.5,action[1],color=[0.9,0.9,0.9],alpha=0.2)
-                        ax.quiver(ind%self.dims[0] + 0.5,0.5,ind//self.dims[0] + 0.5,
+                        ax.quiver(state%self.dims[0] + 0.5,0.5,state//self.dims[0] + 0.5,
                             action[0],0.5,action[1],color=[0.9,0.9,0.9],alpha=0.2)
                     else:
-                        ax.quiver(ind%self.dims[0] + 0.5,time+1,ind//self.dims[0] + 0.5,
+                        ax.quiver(state%self.dims[0] + 0.5,time+1,state//self.dims[0] + 0.5,
                             action[0],1,action[1],color=[0.9,0.9,0.9],alpha=0.2)
         
         # Draw this over the other arrows
-        if path:
+        if rat != None:
             for i in range(len(moves)):
                 if cells[i][0] == self.dims[2]-1: # end => start
                     ax.quiver(cells[i][1]%self.dims[0] + 0.5,cells[i][0]+1,cells[i][1]//self.dims[0] + 0.5,
@@ -915,37 +985,98 @@ class Environment:
         
         plt.show()
 
-    def plotPerformance(self) -> None:
-        """
-        Plots a graph of the performance of current policy
-        """
-        plt.plot(list(range(0,self.totalGenerations)),self.cumulativeRewards,label=f'{self.method}, senseTime = {self.senseTime}, backToStartOnP = {self.backToStartOnP}')
-       
-        plt.legend()
-        plt.xlabel("Episodes")
-        plt.ylabel("Sum of reward")
-        plt.show()
-
     # =============== #
     #      RATS       #
     # =============== #
 
-    def getAverageCumulativeReward(self):
-        maxEpisodes = max(rat.totalGenerations for rat in self.rats)
+    def __customSelection__(self,args: dict) -> list:
+        """
+        Gets the selection of rats that meet a specific requirement. Possible custom tags:
+        {
+            "method": str,
+            "alpha": float,
+            "gamma": float,
+            "epsilon": float,
+            "episodes": int,
+            "randomQ": bool,
+            "senseTime": bool
+        }
+        Selection are a list of indeces
+        """
+        rats = list(range(self.nrRats))
+
+        # Method
+        method = args.get("method",None)
+        if method != None:
+            rats = [i for i in rats if self.rats[i].method == method]
+        
+        # Alpha
+        alpha = args.get("alpha",None)
+        if alpha != None:
+            rats = [i for i in rats if self.rats[i].policyargs[0] == alpha]
+        
+        # Gamma
+        gamma = args.get("gamma",None)
+        if gamma != None:
+            rats = [i for i in rats if self.rats[i].policyargs[1] == gamma]
+        
+        # Epsilon
+        epsilon = args.get("epsilon",None)
+        if epsilon != None:
+            rats = [i for i in rats if self.rats[i].policyargs[2] == epsilon]
+        
+        # Episodes
+        episodes = args.get("episodes",None)
+        if episodes != None:
+            rats = [i for i in rats if self.rats[i].totalGenerations == episodes]
+        
+        # randomQ
+        randomQ = args.get("randomQ",None)
+        if randomQ != None:
+            rats = [i for i in rats if self.rats[i].randomQ == randomQ]
+        
+        # senseTime
+        senseTime = args.get("senseTime",None)
+        if senseTime != None:
+            rats = [i for i in rats if self.rats[i].senseTime == senseTime]
+
+        print(f"Custom selection yielded {len(rats)} rat(s)")
+        return rats
+
+    def getACR(self, custom = None, all = True) -> list:
+        """
+        Gets the average cumulative reward for a selection of rats, if not all
+        """
+        if custom != None:
+            ratInd = self.__customSelection__(custom)
+        elif all:
+            ratInd = list(range(self.nrRats))
+
+        maxEpisodes = max(self.rats[i].totalGenerations for i in ratInd)
         lst = [[] for i in range(maxEpisodes)]
-        for rat in self.rats:
-            for i in range(rat.totalGenerations):
-                lst[i].append(rat.cumulativeRewards[i])
+        for ind in ratInd:
+            for i in range(self.rats[ind].totalGenerations):
+                lst[i].append(self.rats[ind].cumulativeRewards[i])
         return [sum(x)/len(x) for x in lst]
 
-    def killRats(self):
+    def killRats(self, custom = None, all = True) -> None:
         """
-        Kills all rats
+        Kills a selection of rats, if not all
         """
-        self.rats = []
-        self.nrRats = 0
+        if self.nrRats == None or self.nrRats == 0:
+            return
+
+        if custom != None:
+            ratInd = self.__customSelection__(custom)
+        elif all:
+            ratInd = []
+
+        keepalive = list(set(range(self.nrRats)) - set(ratInd))
+
+        self.rats = [self.rats[rat] for rat in keepalive]
+        self.nrRats = len(self.rats)
     
-    def generateRats(self,rats: int, method: str, args: tuple, randomQ: bool):
+    def generateRats(self,rats: int, method: str, args: tuple, randomQ: bool, senseTime: bool = True) -> None:
         """
         Generates rats\n
         Parameters
@@ -954,14 +1085,14 @@ class Environment:
         `method`:`str`, the method the rat is using for updating the policy, which is one of `['Bellman','SARSA','QLearning']`
         `args`:`tuple(float,float,float)`, the floats representing the learning rate, discount factor and epsilon respectively
         `randomQ`:`bool`, whether the Q(s,a) values are randomly initialized or not        
+        `senseTime`:`bool`, whether there is a sense of time in the environment
         """
         for rat in range(rats):
             self.rats.append(self.Rat(self))
-            self.rats[-1].setUpdatingPolicy(method, args, randomQ)
+            self.rats[-1].setUpdatingPolicy(method, args, randomQ, senseTime)
         self.nrRats += rats
-        print()
 
-    def trainRats(self, episodes, custom = None, all = True):
+    def trainRats(self, episodes, custom = None, all = True) -> None:
         """
         Trains rats by updating their Q(s,a) values\n
         Parameters
@@ -971,80 +1102,83 @@ class Environment:
         `all`: `bool`, whether it should train all rats. Custom selections have priority
         """
         if custom != None:
-            for index,item in enumerate(custom):
-                # Print status
-                sys.stdout.write("\r [" + "="*int(((index+1)/len(custom)) * 20) + "."*(20-(int(((index+1)/len(custom)) * 20))) +f"] RATS={index+1}/{len(custom)}     ")
-                sys.stdout.flush()
-                
-                # Check if index in range:
-                if item < len(self.rats):
-                    self.rats[index].updatePolicy(episodes)
-                else:
-                    raise Exception(f"Can't address rat {item}, since there are only {len(self.rats)} rats.")
+            ratInd = self.__customSelection__(custom)
         elif all:
-            for index, rat in enumerate(self.rats):
-                # Print status
-                sys.stdout.write("\r [" + "="*int(((index+1)/self.nrRats) * 20) + "."*(20-(int(((index+1)/self.nrRats) * 20))) +f"] RATS={index+1}/{self.nrRats}     ")
-                sys.stdout.flush()
-                rat.updatePolicy(episodes)
+            ratInd = list(range(self.nrRats))
+
+        ETA = 0
+        recalculate = episodes//10
+
+        for ind,rat in enumerate(ratInd):
+            # Print status
+
+            if ind%recalculate == 0: t1 = perf_counter()
+            
+            sys.stdout.write("\r [" + "="*int(((ind+1)/len(ratInd)) * 20) + "."*(20-(int(((ind+1)/len(ratInd)) * 20))) +f"] RATS={ind+1}/{len(ratInd)}, ETA: {ETA}")
+            sys.stdout.flush()
+            
+            self.rats[rat].updatePolicy(episodes)
+            
+            if ind%recalculate == 0: t2 = perf_counter()
+
+            ETA = (t2-t1) * (len(ratInd) - ind)
+            ETA = strftime("%M:%S", gmtime(ETA))
         print()
+
+    def averageQRats(self, custom = None, all = True) -> Rat:
+        """
+        Returns the a rat containing the average Q(s,a) values of a selection of rats\n
+        Parameters
+        ----------
+        `custom`: `list`, a custom selection of rats (as indexes) you want to average (default = None)
+        `all`: `bool`, whether it should average all rats. Custom selections have priority\n
+        Return
+        --------
+        A rat of type `Rat`.
+        IT IS ASSUMED THE Q(S,A) TABLE OF ALL RATS HAS THE SAME SHAPE
+        IF ANY VARIABLES VARY OVER ALL RATS (E.G. METHOD, POLICY ARGS, ETC.), IT TAKES THE FIRST RAT
+        """    
+        if custom != None:
+            ratInd = self.__customSelection__(custom)
+        elif all:
+            ratInd = list(range(self.nrRats))
+
         
+        avgRat = self.Rat(self)
+        nrAvgRats = len(ratInd)
+
+        if nrAvgRats == 0:
+            return avgRat
+        
+        avgRat.setUpdatingPolicy(self.rats[ratInd[0]].method,self.rats[ratInd[0]].policyargs,randomQ = False,senseTime=self.rats[ratInd[0]].senseTime)
+
+        for rat in ratInd:
+            for time in range(self.dims[2]):
+                for states in range(self.dims[1]*self.dims[0]):
+                    for action in self.actions:
+                        avgRat.__setQ__((time,states),action, \
+                            avgRat.__getQ__((time,states),action) + self.rats[rat].__getQ__((time,states),action)/nrAvgRats)
+        return avgRat
+
     # =============== #
     #     CONTROL     #
-    # =============== #   
+    # =============== #
 
-    def __getStartingState__(self):
+    def __getStartingState__(self) -> tuple:
         """
-        Get a random starting state concerning time, if self.senseTime==False
+        Get a random starting state
         """
-        if self.senseTime:
-            self.startingTime = self.startingState[0]
-            return self.startingState
         self.startingTime = randint(0,self.dims[2]-1)
         return (self.startingTime,self.startingState[1])
-
-    def __getActions__(self,s):
-        """
-        get actions for a specific time and a specific state
-        param t: 0 <= t < self.dims[2]
-        param s: 0 <= s < self.dims[0]*self.dims[1]
-        return: actions subset of self.actions
-        """
-        return self.states[s[0]][s[1]].actions.keys()
-
-    def __doAction__(self,s,a):
-        """
-        returns the next state
-        param s: current state
-        param a: action
-        """
-        return self.states[s[0]][s[1]].actions[a]
-
-    def __getMoves__(self):
-        curTime, curPos = self.__getStartingState__()
-        path = []
-        states = [(curTime, curPos)]
-        while not self.states[curTime][curPos].isTerminal \
-            and len(set(states)) == len(states):
-            move = self.__optimalQ__((curTime,curPos))
-            path.append(move)
-            curTime, curPos = self.__doAction__((curTime,curPos),move)
-            states.append((curTime,curPos))
-
-        #print(f"Moves found: {path}")
-        return path
-    
-    def __getPath__(self):
-        marked = [(self.startingTime,self.startingState[1])]
-        for i in self.__getMoves__():
-            marked.append(self.__doAction__(marked[-1],i))
-        return marked
 
     # =============== #
     #     UTILITY     #
     # =============== #    
 
-    def summary(self,exportCSV=False,elaborate=False):
+    def summary(self,elaborate=False) -> None:
+        if self.dims == None:
+            raise Exception("Please setup() the environment first!")
+
         print(f"==== SUMMARY ====")
         print(f"Dimensions: {self.dims}")
         print(f"Number of states: {self.nrStates}")
@@ -1054,15 +1188,10 @@ class Environment:
         print(f"Possible moves: {self.nrActions}")
         print(f"Moves: {self.actions}")
         print(f"Back to start on P state: {self.backToStartOnP}")
-        print(f"Sense of time: {self.senseTime}")
         print(f"Starting state: {self.startingState}")
         print(f"=================")
-        print(f"Policy method: {self.method}")
-        print(f"Learning rate alpha: {self.policyargs[0]}")
-        print(f"Discount factor gamma: {self.policyargs[1]}")
-        print(f"Epsilon: {self.policyargs[2]}")
-        print(f"Q(s,a) initialized randomly: {self.randomQ}")
-        print(f"Total generations trained: {self.totalGenerations}")
+        print(f"Number of rats: {self.nrRats}")
+        print(f"Unique rat configurations: {len(self.getACR().keys())}")
         print(f"=================")
         if elaborate:
             print(f"States:")
@@ -1070,130 +1199,250 @@ class Environment:
                 for jnd, state in enumerate(grids):
                     print(f"State: {(ind,jnd)}, tag: {state.tag}, value: {state.value:.2f}, actions: {state.actions}")
 
-        if exportCSV:
-            self.__exportToCSV__()
 
 
-def compareAlgorithms(folder,args,rats,episodes,randomQ):
-    env = Environment(folder,backToStartOnP=True)
+def SuttonAndBarto():
+    """
+    Example 6.6 from Reinforcement Learning by Sutton and Barto.
+    Done in 7 lines
+    """
+    env = Environment("cliffworld",backToStartOnP=True)
     env.defineActions([(0,1),(1,0),(-1,0),(0,-1)])
     env.setup()
 
-    env.generateRats(rats, method="SARSA", args=args, randomQ=randomQ)
+    env.generateRats(100, method="SARSA", args=(0.1,0.9,0.1), randomQ=True, senseTime=True)
+    env.generateRats(100, method="QLearning", args=(0.1,0.9,0.1), randomQ=True, senseTime=True)
+    env.trainRats(episodes=500,all=True)
+
+    env.plotPerformance([
+        ({"method":"SARSA"},"SARSA"),
+        ({"method":"QLearning"},"QLearning")
+    ])
+
+def Environment1():
+    """
+    Environment 1, seen in the result section of the paper 
+    """
+    env = Environment("env1",backToStartOnP=False)
+    env.defineActions([(0,1),(1,0),(-1,0),(0,-1),(0,0)]) # <- Note (0,0). Rats may stand still
+    env.setup()
+    env.draw3D()
+    rats = 100
+    episodes = 500
+
+    # SARSA rats with sense of time
+    env.generateRats(rats, method="SARSA", args=(0.1,0.9,0.1), randomQ=True, senseTime=True)
+    # SARSA rats without sense of time
+    env.generateRats(rats, method="SARSA", args=(0.1,0.9,0.1), randomQ=True, senseTime=False)
+    # QLearning rats with sense of time
+    env.generateRats(rats, method="QLearning", args=(0.1,0.9,0.1), randomQ=True, senseTime=True)
+    # QLearning rats without sense of time
+    env.generateRats(rats, method="QLearning", args=(0.1,0.9,0.1), randomQ=True, senseTime=False)
+    # Train all rats
     env.trainRats(episodes=episodes,all=True)
 
-    SARSA = env.getAverageCumulativeReward()
+    # Plot performances
+    env.plotPerformance([
+        ({"method": "SARSA", "senseTime": True}, "SARSA with time"),
+        ({"method": "SARSA", "senseTime": False}, "SARSA without time"),
+        ({"method": "QLearning", "senseTime": True}, "QLearning with time"),
+        ({"method": "QLearning", "senseTime": False}, "QLearning without time")
+    ])
 
-    #env.draw3D(path=True)
 
-    env = Environment(folder,backToStartOnP=True)
-    env.defineActions([(0,1),(1,0),(-1,0),(0,-1)])
+    # To draw the animations, like stated in the results, remove the return:
+    return
+
+    # Get average rats
+    avgRatSARSATIME = env.averageQRats({"method": "SARSA", "senseTime": True})
+    avgRatQLearningTIME = env.averageQRats({"method": "QLearning", "senseTime": True})
+    avgRatSARSANOTIME = env.averageQRats({"method": "SARSA", "senseTime": False})
+    avgRatQLearningNOTIME = env.averageQRats({"method": "QLearning", "senseTime": False})
+
+    # Average rat with sense of time using SARSA
+    env.draw(avgRatSARSATIME)
+    # Average rat with sense of time using QLearning
+    env.draw(avgRatQLearningTIME)
+    # Average rat without sense of time using SARSA
+    env.draw(avgRatSARSANOTIME)
+    # Average rat without sense of time using QLearning
+    env.draw(avgRatQLearningNOTIME)
+
+def Environment2():
+    """
+    Environment 2, seen in the result section of the paper 
+    """
+    env = Environment("env2",backToStartOnP=False)
+    env.defineActions([(0,1),(1,0),(-1,0),(0,-1)]) # <- Note no (0,0). Rats may not stand still
     env.setup()
+    env.draw3D()
+    rats = 100
+    episodes = 500
 
-    env.generateRats(rats, method="QLearning", args=args, randomQ=randomQ)
+    # SARSA rats with sense of time
+    env.generateRats(rats, method="SARSA", args=(0.1,0.9,0.1), randomQ=True, senseTime=True)
+    # SARSA rats without sense of time
+    env.generateRats(rats, method="SARSA", args=(0.1,0.9,0.1), randomQ=True, senseTime=False)
+    # QLearning rats with sense of time
+    env.generateRats(rats, method="QLearning", args=(0.1,0.9,0.1), randomQ=True, senseTime=True)
+    # QLearning rats without sense of time
+    env.generateRats(rats, method="QLearning", args=(0.1,0.9,0.1), randomQ=True, senseTime=False)
+    # Train all rats
     env.trainRats(episodes=episodes,all=True)
-    QLEARNING = env.getAverageCumulativeReward()
-    
-    #env.draw3D(path=True)
-    #print(SARSA,QLEARNING)
-    
-    plt.ylim([min(Environment.POINTS.values()), max(Environment.POINTS.values())])
-    plt.xlim(0,len(SARSA))
-    plt.plot(list(range(0,episodes)),[SARSA[i] for i in range(0,episodes)],label="SARSA")
-    plt.plot(list(range(0,episodes)),[QLEARNING[i] for i in range(0,episodes)],label="QLearning")
-    plt.legend()
-    plt.xlabel("Episodes")
-    plt.ylabel("Sum of rewards")
-    plt.show()
 
-def compareSenses(folder, args, episodes, randomQ):
-    # With sense of time, using SARSA
-    env = Environment(folder,senseTime=True,backToStartOnP=True)
-    env.defineActions([(0,1),(1,0),(-1,0),(0,-1)])
+    # Plot performances
+    env.plotPerformance([
+        ({"method": "SARSA", "senseTime": True}, "SARSA with time"),
+        ({"method": "SARSA", "senseTime": False}, "SARSA without time"),
+        ({"method": "QLearning", "senseTime": True}, "QLearning with time"),
+        ({"method": "QLearning", "senseTime": False}, "QLearning without time")
+    ])
+
+
+    # To draw the animations, like stated in the results, remove the return:
+    return
+
+    # Get average rats
+    avgRatSARSATIME = env.averageQRats({"method": "SARSA", "senseTime": True})
+    avgRatQLearningTIME = env.averageQRats({"method": "QLearning", "senseTime": True})
+    avgRatSARSANOTIME = env.averageQRats({"method": "SARSA", "senseTime": False})
+    avgRatQLearningNOTIME = env.averageQRats({"method": "QLearning", "senseTime": False})
+
+    # Average rat with sense of time using SARSA
+    env.draw(avgRatSARSATIME)
+    # Average rat with sense of time using QLearning
+    env.draw(avgRatQLearningTIME)
+    # Average rat without sense of time using SARSA
+    env.draw(avgRatSARSANOTIME)
+    # Average rat without sense of time using QLearning
+    env.draw(avgRatQLearningNOTIME)
+
+def Environment3():
+    env = Environment("env3",backToStartOnP=False)
+    env.defineActions([(0,1),(1,0),(-1,0),(0,-1),(0,0)]) # <- Note (0,0). Rats may stand still
     env.setup()
+    env.draw3D()
+    rats = 100
+    episodes = 500
 
-    env.setUpdatingPolicy("SARSA", args, randomQ)
-    env.updatePolicy(episodes)
-    timeSenseSARSA = env.cumulativeRewards.copy()
+    # SARSA rats with sense of time
+    env.generateRats(rats, method="SARSA", args=(0.1,0.9,0.1), randomQ=True, senseTime=True)
+    # SARSA rats without sense of time
+    env.generateRats(rats, method="SARSA", args=(0.1,0.9,0.1), randomQ=True, senseTime=False)
+    # QLearning rats with sense of time
+    env.generateRats(rats, method="QLearning", args=(0.1,0.9,0.1), randomQ=True, senseTime=True)
+    # QLearning rats without sense of time
+    env.generateRats(rats, method="QLearning", args=(0.1,0.9,0.1), randomQ=True, senseTime=False)
+    # Train all rats
+    env.trainRats(episodes=episodes,all=True)
 
-    # Without sense of time, using SARSA
-    env = Environment(folder,senseTime=False,backToStartOnP=True)
-    env.defineActions([(0,1),(1,0),(-1,0),(0,-1)])
+    # Plot performances
+    env.plotPerformance([
+        ({"method": "SARSA", "senseTime": True}, "SARSA with time"),
+        ({"method": "SARSA", "senseTime": False}, "SARSA without time"),
+        ({"method": "QLearning", "senseTime": True}, "QLearning with time"),
+        ({"method": "QLearning", "senseTime": False}, "QLearning without time")
+    ])
+
+
+    # To draw the animations, like stated in the results, remove the return:
+    return
+
+    # Get average rats
+    avgRatSARSATIME = env.averageQRats({"method": "SARSA", "senseTime": True})
+    avgRatQLearningTIME = env.averageQRats({"method": "QLearning", "senseTime": True})
+    avgRatSARSANOTIME = env.averageQRats({"method": "SARSA", "senseTime": False})
+    avgRatQLearningNOTIME = env.averageQRats({"method": "QLearning", "senseTime": False})
+
+    # Average rat with sense of time using SARSA
+    env.draw(avgRatSARSATIME)
+    # Average rat with sense of time using QLearning
+    env.draw(avgRatQLearningTIME)
+    # Average rat without sense of time using SARSA
+    env.draw(avgRatSARSANOTIME)
+    # Average rat without sense of time using QLearning
+    env.draw(avgRatQLearningNOTIME)
+
+def compareSenses(folder):
+    """
+    So instead of knowing what time you are in, or being able to know that, you get
+    2 scenarios:
+
+    1. the rat starts in a random time step but knows what time it is.
+    2. the rat starts in a random time step but does now know what time it is, 
+        nor knows how many time steps there are. This is the same as filling
+        every Q(s,a) value for every T at the same time, since, you do not know what 
+        time it is. So you can actually move just like normal, but, since you adjust
+        all time steps, no time step will be different from each other, thus not
+        having access to memory of a specific time step AND a specific state, but just
+        the specific state.
+    """
+
+    env = Environment(folder,backToStartOnP=False)
+    env.defineActions([(0,1),(1,0),(-1,0),(0,-1),(0,0)])
     env.setup()
+    env.draw3D()
+    rats = 100
+    episodes = 500
 
-    env.setUpdatingPolicy("SARSA", args, randomQ)
-    env.updatePolicy(episodes)
-    noTimeSenseSARSA = env.cumulativeRewards.copy()
+    # SARSA rats with sense of time
+    env.generateRats(rats, method="SARSA", args=(0.1,0.9,0.1), randomQ=True, senseTime=True)
+    # SARSA rats without sense of time
+    env.generateRats(rats, method="SARSA", args=(0.1,0.9,0.1), randomQ=True, senseTime=False)
+    # QLearning rats with sense of time
+    env.generateRats(rats, method="QLearning", args=(0.1,0.9,0.1), randomQ=True, senseTime=True)
+    # QLearning rats without sense of time
+    env.generateRats(rats, method="QLearning", args=(0.1,0.9,0.1), randomQ=True, senseTime=False)
+    # Train all rats
+    env.trainRats(episodes=episodes,all=True)
 
-    # With sense of time, using SARSA
-    env = Environment(folder,senseTime=True,backToStartOnP=True)
-    env.defineActions([(0,1),(1,0),(-1,0),(0,-1)])
-    env.setup()
+    # Plot performances
+    env.plotPerformance([
+        ({"method": "SARSA", "senseTime": True}, "SARSA with time"),
+        ({"method": "SARSA", "senseTime": False}, "SARSA without time"),
+        ({"method": "QLearning", "senseTime": True}, "QLearning with time"),
+        ({"method": "QLearning", "senseTime": False}, "QLearning without time")
+    ])
 
-    env.setUpdatingPolicy("QLearning", args, randomQ)
-    env.updatePolicy(episodes)
-    timeSenseQLEARNING = env.cumulativeRewards.copy()
 
-    # Without sense of time, using SARSA
-    env = Environment(folder,senseTime=False,backToStartOnP=True)
-    env.defineActions([(0,1),(1,0),(-1,0),(0,-1)])
-    env.setup()
 
-    env.setUpdatingPolicy("QLearning", args, randomQ)
-    env.updatePolicy(episodes)
-    noTimeSenseQLEARNING = env.cumulativeRewards.copy()
+    avgRatSARSA = env.averageQRats({"method": "SARSA", "senseTime": False})
+    avgRatSARSA.summary()
+    #avgRatSARSA.__exportToCSV__()
+    avgRatQLearning = env.averageQRats({"method": "QLearning", "senseTime": False})
+    avgRatQLearning.summary()
+    #avgRatQLearning.__exportToCSV__()
 
-    # Plot:
-    plt.plot(list(range(0,episodes)),[timeSenseSARSA[i] for i in range(0,episodes)],label='SARSA, senseTime = True')
-    plt.plot(list(range(0,episodes)),[noTimeSenseSARSA[i] for i in range(0,episodes)],label="SARSA, senseTime = False")
-    plt.plot(list(range(0,episodes)),[timeSenseQLEARNING[i] for i in range(0,episodes)],label='QLearning, senseTime = True')
-    plt.plot(list(range(0,episodes)),[noTimeSenseQLEARNING[i] for i in range(0,episodes)],label="QLearning, senseTime = False")
-    
-    plt.legend()
-    plt.xlabel("Episodes")
-    plt.ylabel("Sum of reward")
-    plt.show()
+    env.draw(avgRatSARSA)
+    env.draw(avgRatQLearning)
 
+    avgRatSARSA = env.averageQRats({"method": "SARSA", "senseTime": True})
+    avgRatSARSA.summary()
+    #avgRatSARSA.__exportToCSV__()
+    avgRatQLearning = env.averageQRats({"method": "QLearning", "senseTime": True})
+    avgRatQLearning.summary()
+    #avgRatQLearning.__exportToCSV__()
+
+    env.draw(avgRatSARSA)
+    env.draw(avgRatQLearning)
 
 
 def main():
 
-    compareAlgorithms("gridworld",(0.1,0.5,0.1),rats=200,episodes=500,randomQ=True)
+    # Program
 
-    #compareSenses("gridworld", (0.1,0.9,0.1), episodes=100, randomQ=False)
-    # Setup the environment
+    # Sutton and Barto example 6.6
+    # SuttonAndBarto()
+
+    # Environment1() 
+    # Environment2()
+    # Environment3()
 
     return
-
-    ## Setup the model
-    env = Environment("lvl3",senseTime=True,backToStartOnP=False)
-    env.defineActions([(0,1),(1,0),(-1,0),(0,-1)])
-    env.setup()
-
-    ## Set policy
-    env.setUpdatingPolicy("SARSA",(0.1,0,0.1),randomQ=True)
-
-    ## Update policy with x number of episodes
-    env.updatePolicy(episodes=500)
-
-    ## Draw method
-    env.draw3D(path=False)
-
-    ## Draw
-    env.summary(exportCSV=True)
-
-    env.draw(drawAnimation=True,
-             drawModel=True,
-             train=True)
-    #env.plotPerformance()
-
+  
 
 if __name__ == "__main__":
     main()
 
-
-# Notes van de meeting:
-# <check> backToStart klopt dat?
-# score is gemiddelde van multiple rats 
-# <check> trueMax instead of max
-# no knowledge of time means no time to know
+# TODO: import CSV
+# TODO: export images
