@@ -5,7 +5,7 @@ from matplotlib.ticker import LinearLocator
 import numpy as np
 import pygame
 from pygame.locals import *
-from random import uniform, choice, randint
+from random import uniform, choice, randint, shuffle
 import csv
 import matplotlib.pyplot as plt
 import sys
@@ -77,7 +77,7 @@ class Environment:
         """
         Rat class. Holds a few variables:
         `env`:`Environment`, the current environment
-        `method`:`str`, the method the rat is using for updating the policy, which is one of `['Bellman','SARSA','QLearning']`
+        `method`:`str`, the method the rat is using for updating the policy, which is one of `['SARSA','QLearning']`
         `policyargs`:`tuple(float,float,float)`, the floats representing the learning rate, discount factor and epsilon respectively
         `cumulativeRewards`:`list`, list of all rewards through all episodes
         `randomQ`:`bool`, whether the Q(s,a) values are randomly initialized or not
@@ -89,7 +89,7 @@ class Environment:
         If this is not the case, the `startingState`'s position is the same, but time may differ.
         This comes down to `startingState = (t, pos)` for random `t` in `[0,dims[2]]`
         """
-        def __init__(self,env):
+        def __init__(self,env) -> None:
             self.env = env
             self.method = None
             self.policyargs = None
@@ -103,15 +103,44 @@ class Environment:
         #     UPDATE      #
         # =============== # 
 
-        def importPolicy(self,policy):
-            pass
+        def importPolicy(self,policy: str) -> None:
+            """
+            Imports a CSV file of a policy\n
+            Parameters
+            --------
+            `policy`:`str`, filename of the policy.
+            """
+            with open(policy, newline='') as csvfile:
+
+                rows = csv.reader(csvfile, delimiter=',')
+
+                rows = list(rows)
+
+                indexes = {}
+                for action in rows[0][3:]:
+                    try:
+                        a = tuple(int(x) for x in action[3:-2].split(','))
+                        indexes[action] = self.env.actions.index(a)
+                    except Exception as e:
+                        print(e)
+
+                for row in rows[1:]:
+                    for i in range(3,len(row)):
+                        try:
+                            s = tuple(int(x) for x in row[0][1:-1].split(','))
+                            a = self.env.actions[indexes[rows[0][i]]]
+                            self.__setQ__(s, a, float(row[i]))
+                        except:
+                            pass
+
+                print("Success!")
 
         def setUpdatingPolicy(self,method: str, args: tuple, randomQ: bool, senseTime: bool = True) -> None:
             """
             Sets the policy method used to train\n
             Parameters
             --------
-            `method`:`str`, method in `["Bellman","SARSA","QLearning"]`
+            `method`:`str`, method in `["SARSA","QLearning"]`
             `args`:`tuple`, tuple in the form of `(alpha, gamma, epsilon)`
             `randomQ`:`bool`, whether all states start on 0 or random
             `senseTime`:`bool`, whether the rat has a sense of time (default = True)
@@ -183,9 +212,16 @@ class Environment:
             else:
                 raise Exception(f"Method {self.method} not found")
 
-        def __getQ__(self,s,a):
+        def __getQ__(self,s: tuple, a: tuple) -> float:
             """
-            s is a tuple (t,s)
+            Gets the q value of state s:(t,s) and action a.\n
+            Parameters
+            --------
+            `s`:`tuple`, the state, consisting of (time,state)
+            `a`:`tuple`, the action, consisting of (dw, dh)\n
+            Returns
+            --------
+            `float`: Q value
             """
             # If you are in a terminal state, return 0
             if self.env.states[s[0]][s[1]].isTerminal:
@@ -193,22 +229,36 @@ class Environment:
         
             return self.Q[s[0]*self.env.dims[0]*self.env.dims[1] + s[1]][self.env.actions.index(a)]
 
-        def __setQ__(self,s,a,value):
+        def __setQ__(self,s,a,value) -> None:
+            """
+            Sets the Q `value` at a state `s` and action `a`. \n
+            Parameters
+            ---------
+            `s`:`tuple`, the state, consisting of (time,state)
+            `a`:`tuple`, the action, consisting of (dw, dh)\n
+            `value`:`float`, the new value at Q(s,a)
+            """
             self.Q[s[0]*self.env.dims[0]*self.env.dims[1] + s[1]][self.env.actions.index(a)] = value
 
-        def __optimalQ__(self, s):
+        def __trueMax__(self, s) -> tuple:
             """
-            Get the optimal action from a current state
+            Gets the action for some state that has the maximum Q(s,a) value. 
+            If multiple actions in some state have the same maximum Q(s,a) value, a random action from the maximum actions is picked.\n
+            Parameters
+            --------
+            `s`:`tuple`, the state, consisting of (time,state)\n
+            Returns
+            --------
+            `tuple`: the action with the maximum Q(s,a) value
             """
-            return max((self.__getQ__(s,a),a) for a in self.__getActions__(s))[1]
-
-        def __trueMax__(self, s):
             maxValue = max(self.__getQ__(s,a) for a in self.__getActions__(s))
             filteredLst = [a for a in self.__getActions__(s) if self.__getQ__(s,a) == maxValue]
             return choice(filteredLst)
 
-        def __SARSA__(self, alpha, gamma, epsilon, iterations, output = False):
-
+        def __SARSA__(self, alpha, gamma, epsilon, iterations, output = False) -> None:
+            """
+            Updating method SARSA. 
+            """
             def pickAction(s):
                 
                 # Check if terminal:
@@ -272,8 +322,10 @@ class Environment:
                 print()
                 print(f"Performed SARSA equation, {iterations} iterations.")
         
-        def __QLearning__(self, alpha, gamma, epsilon, iterations, output = False):
-            
+        def __QLearning__(self, alpha, gamma, epsilon, iterations, output = False) -> None:
+            """
+            Updating method Q-Learning
+            """
             def pickAction(s):
                 
                 # Check if terminal:
@@ -336,7 +388,10 @@ class Environment:
                 print()
                 print(f"Performed QLearning equation, {iterations} iterations.")
 
-        def __exportToCSV__(self,output=False):
+        def __exportToCSV__(self,output=False) -> None:
+            """
+            Exports the Q(s,a) values of this rat to a CSV file
+            """
             # open the file in the write mode
             with open(f'{self.method}.csv', 'w+') as f:
 
@@ -362,26 +417,35 @@ class Environment:
         #     CONTROL     #
         # =============== #   
 
-        def __getActions__(self,s):
+        def __getActions__(self,s) -> list:
             """
-            get actions for a specific time and a specific state
-            param t: 0 <= t < self.dims[2]
-            param s: 0 <= s < self.dims[0]*self.dims[1]
-            return: actions subset of self.actions
+            Get actions for a specific time and a specific state\n
+            Parameters
+            --------
+            `s`:`tuple`, the state, consisting of (time,state)\n
+            Returns
+            --------
+            subset of self.actions
             """
             return self.env.states[s[0]][s[1]].actions.keys()
 
-        def __doAction__(self,s,a):
+        def __doAction__(self,s,a) -> tuple:
             """
-            returns the next state
-            param s: current state
-            param a: action
+            Returns the next state if action `a` is done in state `s`\n
+            Parameters
+            --------
+            `s`:`tuple`, the state, consisting of (time,state)
+            `a`:`tuple`, the action, consisting of (dw, dh)\n
+            Returns
+            --------
+            `tuple`: the next state 
             """
             return self.env.states[s[0]][s[1]].actions[a]
         
         def __getPath__(self) -> list:
             """
             Returns a path in the form of [state, state, state ...]
+            The path is created with an egreedy policy.
             """
             marked = [self.env.__getStartingState__()]
 
@@ -402,7 +466,10 @@ class Environment:
         #     UTILITY     #
         # =============== #
 
-        def summary(self):
+        def summary(self) -> None:
+            """
+            Prints information of the rat
+            """
             print(f"==== SUMMARY ====")
             print(f"Method: {self.method}")
             print(f"Learning rate: {self.policyargs[0]}")
@@ -1176,13 +1243,24 @@ class Environment:
     # =============== #    
 
     def summary(self,elaborate=False) -> None:
+
+        def getRatConfigs():
+            """
+            Extracts rat configs as keys and amount of rats having that config as values
+            """
+            dic = {}
+            for rat in self.rats:
+                info = (rat.method, rat.policyargs, rat.totalGenerations, rat.randomQ, rat.senseTime)
+                dic[info] = dic.get(info, 0) + 1
+            return dic
+
         if self.dims == None:
             raise Exception("Please setup() the environment first!")
 
         print(f"==== SUMMARY ====")
         print(f"Dimensions: {self.dims}")
         print(f"Number of states: {self.nrStates}")
-        print(f"Number of actions: {sum([len(self.__getActions__((i,j))) for i in range(self.dims[2]) for j in range(self.dims[0]*self.dims[1])])}")
+        print(f"Number of actions: {sum([len(self.states[i][j].actions) for i in range(self.dims[2]) for j in range(self.dims[0]*self.dims[1])])}")
         print(f"=================")
         print(f"Using folder: {self.folder}")
         print(f"Possible moves: {self.nrActions}")
@@ -1191,7 +1269,17 @@ class Environment:
         print(f"Starting state: {self.startingState}")
         print(f"=================")
         print(f"Number of rats: {self.nrRats}")
-        print(f"Unique rat configurations: {len(self.getACR().keys())}")
+        print(f"Unique rat configurations: {len(getRatConfigs().keys())}")
+        ratconfigs = getRatConfigs()
+        for config in ratconfigs.keys():
+            print(f" | {ratconfigs[config]} rats with:")
+            print(f" | - Method: {config[0]}")
+            print(f" | - Learning rate: {config[1][0]}")
+            print(f" | - Discount factor: {config[1][1]}")
+            print(f" | - Epsilon: {config[1][2]}")
+            print(f" | - Episodes: {config[2]}")
+            print(f" | - randomQ: {config[3]}")
+            print(f" | - senseTime: {config[4]}")
         print(f"=================")
         if elaborate:
             print(f"States:")
@@ -1322,7 +1410,7 @@ def Environment3():
     env.defineActions([(0,1),(1,0),(-1,0),(0,-1),(0,0)]) # <- Note (0,0). Rats may stand still
     env.setup()
     env.draw3D()
-    rats = 100
+    rats = 300
     episodes = 500
 
     # SARSA rats with sense of time
@@ -1347,6 +1435,52 @@ def Environment3():
 
     # To draw the animations, like stated in the results, remove the return:
     return
+
+    # Get average rats
+    avgRatSARSATIME = env.averageQRats({"method": "SARSA", "senseTime": True})
+    avgRatQLearningTIME = env.averageQRats({"method": "QLearning", "senseTime": True})
+    avgRatSARSANOTIME = env.averageQRats({"method": "SARSA", "senseTime": False})
+    avgRatQLearningNOTIME = env.averageQRats({"method": "QLearning", "senseTime": False})
+
+    # Average rat with sense of time using SARSA
+    env.draw(avgRatSARSATIME)
+    # Average rat with sense of time using QLearning
+    env.draw(avgRatQLearningTIME)
+    # Average rat without sense of time using SARSA
+    env.draw(avgRatSARSANOTIME)
+    # Average rat without sense of time using QLearning
+    env.draw(avgRatQLearningNOTIME)
+
+def EnvironmentDiscussion():
+    env = Environment("calc",backToStartOnP=False)
+    env.defineActions([(0,1),(1,0),(-1,0),(0,-1),(0,0)]) # <- Note (0,0). Rats may stand still
+    env.setup()
+    env.draw3D()
+    rats = 100
+    episodes = 500
+
+    # SARSA rats with sense of time
+    env.generateRats(rats, method="SARSA", args=(0.1,0.9,0.1), randomQ=True, senseTime=True)
+    # SARSA rats without sense of time
+    env.generateRats(rats, method="SARSA", args=(0.1,0.9,0.1), randomQ=True, senseTime=False)
+    # QLearning rats with sense of time
+    env.generateRats(rats, method="QLearning", args=(0.1,0.9,0.1), randomQ=True, senseTime=True)
+    # QLearning rats without sense of time
+    env.generateRats(rats, method="QLearning", args=(0.1,0.9,0.1), randomQ=True, senseTime=False)
+    # Train all rats
+    env.trainRats(episodes=episodes,all=True)
+
+    # Plot performances
+    env.plotPerformance([
+        ({"method": "SARSA", "senseTime": True}, "SARSA with time"),
+        ({"method": "SARSA", "senseTime": False}, "SARSA without time"),
+        ({"method": "QLearning", "senseTime": True}, "QLearning with time"),
+        ({"method": "QLearning", "senseTime": False}, "QLearning without time")
+    ])
+
+
+    # To draw the animations, like stated in the results, remove the return:
+    
 
     # Get average rats
     avgRatSARSATIME = env.averageQRats({"method": "SARSA", "senseTime": True})
@@ -1436,7 +1570,8 @@ def main():
 
     # Environment1() 
     # Environment2()
-    # Environment3()
+    Environment3()
+    
 
     return
   
@@ -1444,5 +1579,4 @@ def main():
 if __name__ == "__main__":
     main()
 
-# TODO: import CSV
 # TODO: export images
