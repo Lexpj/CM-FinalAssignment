@@ -76,6 +76,7 @@ env.trainRats(episodes=500,custom={"method":"QLearning"})
 ```
 The custom function filters out only the rats that apply to all arguments specified in the given dictionary.
 
+### Visualisations
 There are a couple of visual options. First of all, the function `draw3D()` draws a three dimensional representation of the environment, like seen here:
 
 ![plot](./assets/cyclicgrid(1).png)
@@ -91,20 +92,55 @@ averageRatSarsaTime = env.averageQRats({"method":"SARSA","senseTime":True})
 env.draw(rat=averageRatSarsaTime)
 ```
 Drawing is done using PyGame. An example of a is seen here:
+
 ![plot](./assets/animation.gif)
 
-\begin{figure}
-    \centering
-    \includegraphics[scale=0.65]{modelanimation.png}
-    \caption{Environment of figure \ref{fig:1} from three-dimensional to two-dimensional representation, with in yellow the path of the current rat in the environment. In the program, the bottom grid shows the animation of the rat showing its moves of the path it goes down.}
-    \label{fig:modelanimation}
-\end{figure}
-Lastly, the performance of a selection of rats can be visualized in a plot. This is done by algorithm \ref{ACR}.
-\begin{algorithm}[caption={Plots performance}, label={ACR}]
+Within the PyGame GUI, there are some more functions you could do to well observe the behaviour:
+
+- Press M to toggle the arrows to show what actions you could do in the state you hover over with your mouse, in order to clearly see the state-action-state transition.
+- Press SPACE to stop the animation from playing
+- Press LEFT to go back one step
+- Press RIGHT to go forward one step
+- Press UP to speed up the animation
+- Press DOWN to slow down the animation
+
+You can also only draw the animation or only draw the model by passing the boolean parameters `drawAnimation` and `drawModel` respectively.
+
+Lastly, the performance of a selection of rats can be visualized in a plot. This is done by:
+```python
 env.plotPerformance([
     ({"method":"SARSA"},"SARSA"),
     ({"method":"QLearning"},"QLearning")
 ])
-\end{algorithm}
-The function takes a list of tuples each of the form (selection, label). For example, algorithm \ref{ACR} takes the selection of all rats having an updating method "SARSA" and label them SARSA, and a selection of all rats having an updating method "QLearning", with the label QLearning. The function shows a plot with on the x-axis the number of episodes and on the y-axis the average cumulative reward of said selection of rats.
+```
+The function takes a list of tuples each of the form (selection, label). For example, this line takes the selection of all rats having an updating method "SARSA" and label them SARSA, and a selection of all rats having an updating method "QLearning", with the label QLearning. The function shows a plot with on the x-axis the number of episodes and on the y-axis the average cumulative reward of said selection of rats. This produces a plot like this:
+
+![plot](./assets/exampleplot.png)
+
+### Example:
+An example can be seen here (and found in the code as well):
+
+```python
+def SuttonAndBarto():
+    env = Environment("cliffworld",backToStartOnP=True)
+    env.defineActions([(0,1),(1,0),(-1,0),(0,-1)])
+    env.setup()
+
+    env.generateRats(100, method="SARSA", args=(0.1,0.9,0.1), randomQ=True, senseTime=True)
+    env.generateRats(100, method="QLearning", args=(0.1,0.9,0.1), randomQ=True, senseTime=True)
+    env.trainRats(episodes=500,all=True)
+
+    env.plotPerformance([
+        ({"method":"SARSA"},"SARSA"),
+        ({"method":"QLearning"},"QLearning")
+    ])
+```
+These 7 lines create example 6.6 from Reinforcement Learning: An Introduction by Sutton and Barto [1], called cliffworld and yields the plot shown in previous section.
+
+## Contributors
+Lex Janssens, s2989344@vuw.leidenuniv.nl, Leiden University @ LIACS
+
+References:
+
+[1] Sutton, R. S. & Barto, A. G. (2018). Reinforcement Learning: An Introduction (second edition). Amsterdam University Press.
 
