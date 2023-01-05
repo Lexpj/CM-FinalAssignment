@@ -70,7 +70,7 @@ In order to train the rats, you specify what rats you want to train and for how 
 env.trainRats(episodes=500,all=True)
 ```
 You can also make a custom selection of rats to be trained. For example, having defined 100 rats using SARSA and 100 rats using QLearning, the algorithm above is the same as the algorithm below:
-```
+```python
 env.trainRats(episodes=500,custom={"method":"SARSA"})
 env.trainRats(episodes=500,custom={"method":"QLearning"})
 ```
@@ -80,7 +80,6 @@ The custom function filters out only the rats that apply to all arguments specif
 There are a couple of visual options. First of all, the function `draw3D()` draws a three dimensional representation of the environment, like seen here:
 
 ![plot](./assets/cyclicgrid(1).png)
-
 
 If the parameter `path = True`, it will show the path in yellow. 
 
