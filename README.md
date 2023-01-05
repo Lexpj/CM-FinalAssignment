@@ -134,10 +134,10 @@ def SuttonAndBarto():
         ({"method":"QLearning"},"QLearning")
     ])
 ```
-These 7 lines create example 6.6 from Reinforcement Learning: An Introduction by Sutton and Barto [1], called cliffworld and yields the plot shown in previous section.
+These 7 lines create example 6.6 from Reinforcement Learning: An Introduction by Sutton and Barto [1], called cliffworld and yields the plot shown in previous section. This example shows the difference between the observed behaviour of Q-Learning and SARSA: SARSA takes a safer path and is less prone to falling into the cliff than Q-Learning, which takes a more risky path along the edge of the cliff. Notice how `backToStartOnP = True`, whereas all the environments use `backToStartOnP = False` by default. 
 
 ## Usage
-To use the program, simply open `main.py`, uncomment in `main()` which environment (from the paper) you want to see, and run it. In each of the functions that define an environment, you can also remove the `return` statement to make the animation draw with the use of a PyGame GUI. With the above explanation, adding a new environment and experiment is also possible.
+To use the program, simply open `main.py`, uncomment in `main()` which environment (from the paper) you want to see, and run it. In each of the functions that define an environment, you can also remove the `return` statement to make the animation draw with the use of a PyGame GUI. With the above explanation, adding a new environment and experiment is also possible. I would suggest starting with `compareSenses()` as a base.
 
 ## Contributors
 Lex Janssens, s2989344@vuw.leidenuniv.nl, Leiden University @ LIACS
