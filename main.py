@@ -1,11 +1,8 @@
-from mpl_toolkits.mplot3d import Axes3D
 import matplotlib.pyplot as plt
-from matplotlib import cm
-from matplotlib.ticker import LinearLocator
 import numpy as np
 import pygame
 from pygame.locals import *
-from random import uniform, choice, randint, shuffle
+from random import uniform, choice, randint
 import csv
 import matplotlib.pyplot as plt
 import sys
@@ -1480,7 +1477,7 @@ def EnvironmentDiscussion():
 
 
     # To draw the animations, like stated in the results, remove the return:
-    
+    return
 
     # Get average rats
     avgRatSARSATIME = env.averageQRats({"method": "SARSA", "senseTime": True})
@@ -1499,19 +1496,8 @@ def EnvironmentDiscussion():
 
 def compareSenses(folder):
     """
-    So instead of knowing what time you are in, or being able to know that, you get
-    2 scenarios:
-
-    1. the rat starts in a random time step but knows what time it is.
-    2. the rat starts in a random time step but does now know what time it is, 
-        nor knows how many time steps there are. This is the same as filling
-        every Q(s,a) value for every T at the same time, since, you do not know what 
-        time it is. So you can actually move just like normal, but, since you adjust
-        all time steps, no time step will be different from each other, thus not
-        having access to memory of a specific time step AND a specific state, but just
-        the specific state.
+    Basis for experiments
     """
-
     env = Environment(folder,backToStartOnP=False)
     env.defineActions([(0,1),(1,0),(-1,0),(0,-1),(0,0)])
     env.setup()
@@ -1530,48 +1516,41 @@ def compareSenses(folder):
     # Train all rats
     env.trainRats(episodes=episodes,all=True)
 
-    # Plot performances
-    env.plotPerformance([
-        ({"method": "SARSA", "senseTime": True}, "SARSA with time"),
-        ({"method": "SARSA", "senseTime": False}, "SARSA without time"),
-        ({"method": "QLearning", "senseTime": True}, "QLearning with time"),
-        ({"method": "QLearning", "senseTime": False}, "QLearning without time")
-    ])
+    
+    return
 
+    # Get average rats
+    avgRatSARSATIME = env.averageQRats({"method": "SARSA", "senseTime": True})
+    avgRatQLearningTIME = env.averageQRats({"method": "QLearning", "senseTime": True})
+    avgRatSARSANOTIME = env.averageQRats({"method": "SARSA", "senseTime": False})
+    avgRatQLearningNOTIME = env.averageQRats({"method": "QLearning", "senseTime": False})
 
-
-    avgRatSARSA = env.averageQRats({"method": "SARSA", "senseTime": False})
-    avgRatSARSA.summary()
-    #avgRatSARSA.__exportToCSV__()
-    avgRatQLearning = env.averageQRats({"method": "QLearning", "senseTime": False})
-    avgRatQLearning.summary()
-    #avgRatQLearning.__exportToCSV__()
-
-    env.draw(avgRatSARSA)
-    env.draw(avgRatQLearning)
-
-    avgRatSARSA = env.averageQRats({"method": "SARSA", "senseTime": True})
-    avgRatSARSA.summary()
-    #avgRatSARSA.__exportToCSV__()
-    avgRatQLearning = env.averageQRats({"method": "QLearning", "senseTime": True})
-    avgRatQLearning.summary()
-    #avgRatQLearning.__exportToCSV__()
-
-    env.draw(avgRatSARSA)
-    env.draw(avgRatQLearning)
-
+    # Average rat with sense of time using SARSA
+    env.draw(avgRatSARSATIME)
+    # Average rat with sense of time using QLearning
+    env.draw(avgRatQLearningTIME)
+    # Average rat without sense of time using SARSA
+    env.draw(avgRatSARSANOTIME)
+    # Average rat without sense of time using QLearning
+    env.draw(avgRatQLearningNOTIME)
 
 def main():
 
     # Program
 
+
     # Sutton and Barto example 6.6
     # SuttonAndBarto()
 
+
+    # Environments from the paper:
     # Environment1() 
     # Environment2()
     # Environment3()
     
+
+    # You can set up an own environment by using
+    # compareSenses() as a basis.
 
     return
   

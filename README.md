@@ -1,4 +1,4 @@
-### CM Assignment
+# CM Assignment
 
 ## Installation
 First clone this repository. In this repository, you will also find a `requirements.txt` file. Install the necessary packages by
@@ -9,7 +9,7 @@ pip install -r requirements.txt
 
 Open `main.py` to use the program.
 
-## Usage
+## Code explanation
 I will elaborately explain the usage in this section.
 
 ### Environment setup
@@ -136,10 +136,13 @@ def SuttonAndBarto():
 ```
 These 7 lines create example 6.6 from Reinforcement Learning: An Introduction by Sutton and Barto [1], called cliffworld and yields the plot shown in previous section.
 
+## Usage
+To use the program, simply open `main.py`, uncomment in `main()` which environment (from the paper) you want to see, and run it. In each of the functions that define an environment, you can also remove the `return` statement to make the animation draw with the use of a PyGame GUI. With the above explanation, adding a new environment and experiment is also possible.
+
 ## Contributors
 Lex Janssens, s2989344@vuw.leidenuniv.nl, Leiden University @ LIACS
 
-References:
+## References:
 
 [1] Sutton, R. S. & Barto, A. G. (2018). Reinforcement Learning: An Introduction (second edition). Amsterdam University Press.
 
