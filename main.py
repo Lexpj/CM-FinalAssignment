@@ -1410,7 +1410,7 @@ def Environment3():
     env.defineActions([(0,1),(1,0),(-1,0),(0,-1),(0,0)]) # <- Note (0,0). Rats may stand still
     env.setup()
     env.draw3D()
-    rats = 300
+    rats = 100
     episodes = 500
 
     # SARSA rats with sense of time
@@ -1570,7 +1570,7 @@ def main():
 
     # Environment1() 
     # Environment2()
-    Environment3()
+    # Environment3()
     
 
     return
